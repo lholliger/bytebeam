@@ -1,32 +1,16 @@
-use std::{sync::{Arc, Mutex}, time::Duration};
+use std::{path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 
 use anyhow::Result;
 use async_stream::stream;
 use bytesize::ByteSize;
-use dotenv::dotenv;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Body;
 use tokio_util::io::ReaderStream;
-use tracing::{debug, error, info, Level};
+use tracing::{debug, error, info};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    dotenv().ok();
-    let server: String = std::env::var("SERVER").expect("No SERVER token provided");
-    let auth: String = std::env::var("AUTH").expect("No AUTH token provided");
-    let subscriber_level = match std::env::var("LOG_LEVEL").unwrap_or_default().as_str() {
-        "TRACE" => Level::TRACE,
-        "DEBUG" => Level::DEBUG,
-        "INFO" => Level::INFO,
-        "WARN" => Level::WARN,
-        "ERROR" => Level::ERROR,
-        _ => Level::INFO, // default if the environment variable is not set or invalid
-    };
-    tracing_subscriber::fmt().with_max_level(subscriber_level).init();
-
-    // read file from argv
-    let filepath = std::env::args().nth(1).expect("Please provide a filename");
+pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<()> {
 
     // open file for streaming
     let file = tokio::fs::File::open(&filepath).await.unwrap();

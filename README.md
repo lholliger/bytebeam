@@ -77,6 +77,7 @@ The URL you upload to is the URL you download from currently. Uploading is a POS
     - Redirect client to a unique url which claims the MPSC?
 - [ ] Handle upload/download dying quickly
     - client currently seems to infinitely upload if the reader dies
+    - prelimiary resume works, but seems to lose some data, may need to be client implementation
 - [x] Download link should give landing page instead of immediate download
 - [ ] Get file size from request instead of a form option
 - [ ] Add some query args on upload to add some requirements/uptions
