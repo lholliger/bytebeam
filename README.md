@@ -22,7 +22,20 @@ The server take environment variables to run, currently just being `AUTH` and `L
 
 I would highly recommend putting this behing some sort of nginx reverse proxy with SSL. This does not handle encryption at all.
 
-From here it is as simple as `cargo run --release --bin server`, Docker coming soon
+From here it is as simple as `cargo run --release --bin server`
+
+If you want to run this container in docker, just build it `docker build -t bytebeam .` and then run. I run it in docker-compose as follows:
+```yml
+    bytebeam:
+        image: bytebeam
+        ports:
+          - "3035:3035"
+        restart: unless-stopped
+        environment:
+          - AUTH=password
+          - LISTEN=0.0.0.0:3035
+          - PROXIED_SERVER=https://proxied-server-address
+```
 
 ## Client Usage
 Client usage can be as simple as doing `curl --form file='@filename' LISTEN/filename`, where the transfer will be started.
