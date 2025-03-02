@@ -1,6 +1,4 @@
 use std::{path::PathBuf, sync::{Arc, Mutex}, time::Duration};
-
-use anyhow::Result;
 use async_stream::stream;
 use bytesize::ByteSize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -9,19 +7,62 @@ use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info};
 use tokio_stream::StreamExt;
 
+use crate::utils::metadata::FileMetadata;
+
 #[tokio::main]
-pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<()> {
+pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<(), ()> {
 
     // open file for streaming
     let file = tokio::fs::File::open(&filepath).await.unwrap();
 
     // get file length
-    let file_len = file.metadata().await?.len();
+    let file_len = file.metadata().await.expect("Could not read metadata").len();
 
     debug!("Found file length: {}", ByteSize(file_len).to_string_as(true));
 
     // get file name from path
     let file_name = std::path::Path::new(&filepath).file_name().unwrap_or_default().to_string_lossy();
+
+    let encoded_file = urlencoding::encode(&file_name);
+    let upload_path = format!("{server}/{encoded_file}");
+
+    // so we need to get the download
+
+    //info!("Download available from: {send_path}");
+
+    let params = [("authentication", auth), ("file-size", file_len.to_string())];
+
+    let client = reqwest::Client::new();
+    let res = client.post(upload_path)
+        .form(&params)
+        .send().await;
+
+    debug!("Request: {:?}", res);
+
+    let metadata: FileMetadata = match res {
+        Ok(response) => {
+            if !response.status().is_success() {
+                error!(
+                    "Non-success response from Beam server: {:?}", response.text().await
+                );
+                return Err(());
+            }
+            match response.json::<FileMetadata>().await {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    error!("Failed to parse file metadata: {:?}.", e);
+                    return Err(());
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to connect to Beam server: {:?}", e);
+            return Err(());
+        }
+    };
+
+    debug!("File metadata received: {:?}", metadata);
+
     let mut reader_stream = ReaderStream::new(file);
 
     let bar = ProgressBar::new(file_len as u64);
@@ -29,9 +70,9 @@ pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<(
         .unwrap());
     bar.enable_steady_tick(Duration::from_millis(100));
     let read_so_far: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+
     let int_read = read_so_far.clone();
     let async_stream = stream! {
-        
         while let Some(chunk) = reader_stream.next().await {
             if let Ok(chunk) = &chunk {
                 let mut b = int_read.lock().unwrap();
@@ -42,24 +83,35 @@ pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<(
         }
     };
 
-    let encoded_file = urlencoding::encode(&file_name);
-    let upload_path = format!("{server}/{encoded_file}");
+    let ul = metadata.get_upload_info();
+    let upload_path = format!("{server}/{}/{}", ul.0, ul.1);
     let send_path = match std::env::var("PROXIED_SERVER") {
-        Ok(s) => format!("{s}/{encoded_file}"),
-        Err(_) => upload_path.clone()
+        Ok(s) => format!("{s}/{}", ul.0),
+        Err(_) => format!("{server}/{}", ul.0)
     };
 
-    info!("Download available from: {send_path}");
-
+    info!("Download is available from: {}", send_path);
+    
     let client = reqwest::Client::new();
     let form = reqwest::multipart::Form::new()
-        .text("authentication", auth)
         .text("file-size", file_len.to_string())
         .part("file", reqwest::multipart::Part::stream(Body::wrap_stream(async_stream)));
 
-    let _ = client.post(&upload_path)
+    match client.post(&upload_path)
         .multipart(form)
-        .send().await?;
+        .send().await {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    error!(
+                        "Non-success response from Beam server: {}",
+                        response.text().await.unwrap()
+                    );
+                }
+            },
+            Err(e) => {
+                error!("Failed to connect to Beam server: {}", e);
+            }
+        }
 
     let fin_bytes = read_so_far.clone().lock().unwrap().clone();
     if fin_bytes == file_len {

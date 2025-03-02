@@ -4,6 +4,8 @@ An extremely simple way to stream a file from one machine to another using a sel
 
 **This is in no way ready for deployment!**
 
+**THIS IS OUTDATED!!**
+
 ## Background
 
 I often using Magic Wormhole but it keeps selecting the proxies in order to send data, which causes major speed losses and general frusteration, so I decided to make a solution that works well for me.
@@ -22,7 +24,7 @@ The server take environment variables to run, currently just being `AUTH` and `L
 
 I would highly recommend putting this behing some sort of nginx reverse proxy with SSL. This does not handle encryption at all.
 
-From here it is as simple as `cargo run --release --bin server`
+From here it is as simple as `cargo run --release -- server`
 
 If you want to run this container in docker, just build it `docker build -t bytebeam .` and then run. I run it in docker-compose as follows:
 ```yml
@@ -54,14 +56,14 @@ The required environment variables are:
 
 Often times `PROXIED_SERVER` can be the same as `SERVER`, however in my use case I connect directly to the server over WireGuard, so I connect using a different more direct path.
 
-It's usage is as simple as `cargo run --release --bin client -- filename`.
+It's usage is as simple as `cargo run --release -- up filename`.
 
 From here it should give a progress bar of it uploading and then stopping around 1GB of upload. The server proxies an estimated GB of data so downloads can be sped up near the start, and if the file is under 1GB, entirely held on the server.
 
 This buffer does sit in RAM, so multiple files could cause some memory management issues. This limit will be editable in the future.
 
 ## Downloading
-The URL you upload to is the URL you download from currently. Uploading is a POST and downloading is a GET. The download can only occur once and the moment the download begins the file is locked to that specific request, so if it fails the transfer needs to be completely re-done.
+The URL you upload to is the URL you download from currently. Uploading is a POST and downloading is a GET. The download can only occur once and the moment the download begins the file is locked to that specific request, so if it fails the transfer needs to be completely re-done. The download redirects you to a holding URL which you should be able to re-pull from if the connection drops, but this doesn't seem to be working properly yet. There will be a download CLI, which will be defined as `beam down [file or server/file]` most likely.
 
 ## TODOs:
 *The content nested is somewhat the thoughts I'm having for solution*
@@ -96,3 +98,4 @@ The URL you upload to is the URL you download from currently. Uploading is a POS
         - is there an easy way to do key exchange without both people needing the client?
     - Allow for decryption using built-in tools when downloading using openssl and curl
 - [ ] Hold client state in some config instead of needing envionment variables for all usage
+- [ ] Move server as a feature to remove unneeded features for those only using the client
