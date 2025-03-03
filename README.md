@@ -90,19 +90,21 @@ The URL you upload to is the URL you download from currently. Uploading is a POS
     - Management of what's currently active, memory usage, etc
 - [ ] A concept of multi-user instead of single auth key
     - uploads still created by single person, however multiple uploads allowed
-- [ ] Smarter cache instead of assuming 4096 byte chunks
+- [x] Smarter cache instead of assuming 4096 byte chunks
     - also adding management of cache size
-- [ ] Expiry of uploads that are entirely within cache after a given time
+- [x] Expiry of uploads that are entirely within cache after a given time
 - [ ] Better logging for client and server, a little less "de-buggy"
 - [ ] Possibly go fully into wormhole territory and encrypt client side
     - Possibly do it with a pre-shared secret since things tend to be one-direction
         - is there an easy way to do key exchange without both people needing the client?
     - Allow for decryption using built-in tools when downloading using openssl and curl
 - [ ] Hold client state in some config instead of needing envionment variables for all usage
+    - also perhaps add a "beam config"
 - [x] Move server as a feature to remove unneeded features for those only using the client
 - [ ] Possibly do away with the "secret" so that one value is for upload and another is for download
     - could be confusing if there is more than one "token" per upload/download pair
 - [ ] Reduce CPU usage/increase speed
 - [x] HTML upload page, CURL instructions
-- [ ] Give feedback after upload
+- [x] Give feedback after upload
+    - Give status codes and more details rather than just a string
 - [x] Keepalive when doing reverse upload

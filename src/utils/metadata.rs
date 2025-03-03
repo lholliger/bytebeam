@@ -1,6 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "server")]
 use rand::Rng;
+#[cfg(feature = "server")]
+use chrono::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FileState {
@@ -17,7 +20,9 @@ pub struct FileMetadata {
     path: String,
     upload_key: String,
     upload: FileState,
-    download: FileState
+    download: FileState,
+    created: DateTime<Utc>,
+    accessed: DateTime<Utc>
 }
 
 impl FileMetadata {
@@ -29,7 +34,9 @@ impl FileMetadata {
             path: FileMetadata::get_secure_string(),
             upload_key: FileMetadata::get_secure_string(),
             upload: FileState::NotStarted,
-            download: FileState::NotStarted
+            download: FileState::NotStarted,
+            created: Utc::now(),
+            accessed: Utc::now()
         }
     }
 
@@ -37,9 +44,12 @@ impl FileMetadata {
         (self.path.clone(), self.upload_key.clone())
     }
 
-    #[cfg(feature = "server")]
     pub fn upload_locked(&self) -> bool { // we cant really allow resumed uploads?
         return self.upload == FileState::InProgress || self.upload == FileState::Complete
+    }
+
+    pub fn download_finished(&self) -> bool {
+        return self.download == FileState::Complete
     }
 
     pub fn get_token(&self) -> &String {
@@ -61,6 +71,11 @@ impl FileMetadata {
     }
 
     #[cfg(feature = "server")]
+    pub fn end_upload(&mut self) { // this is rather simple
+        self.upload = FileState::Complete;
+    }
+
+    #[cfg(feature = "server")]
     pub fn start_download(&mut self) { // this is rather simple
         self.download = FileState::InProgress;
     }
@@ -68,6 +83,11 @@ impl FileMetadata {
     #[cfg(feature = "server")]
     pub fn pause_download(&mut self) {
         self.download = FileState::Paused;
+    }
+
+    #[cfg(feature = "server")]
+    pub fn end_download(&mut self) { // this is rather simple
+        self.download = FileState::Complete;
     }
 
     pub fn download_locked(&self) -> bool {
@@ -87,8 +107,25 @@ impl FileMetadata {
             file_size: 0, // rather unknown during the download
             upload: self.upload.clone(),
             download: self.download.clone(),
-            path: self.path.clone()
+            path: self.path.clone(),
+            created: self.created.clone(),
+            accessed: self.accessed.clone()
         }
+    }
+
+    #[cfg(feature = "server")]
+    pub fn access(&mut self) {
+        self.accessed = Utc::now();
+    }
+
+    #[cfg(feature = "server")]
+    pub fn age(&self) -> Duration {
+        Utc::now() - self.accessed
+    }
+
+    #[cfg(feature = "server")]
+    pub fn is_in_waiting_state(&self) -> bool {
+        self.download == FileState::NotStarted || self.upload == FileState::NotStarted
     }
 
     #[cfg(feature = "server")]

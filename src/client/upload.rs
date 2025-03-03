@@ -1,14 +1,15 @@
-use std::{path::PathBuf, sync::{Arc, Mutex}, time::Duration};
+use std::{io, path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
+use std::io::Write;
 use async_stream::stream;
 use bytesize::ByteSize;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Body;
 use tokio_util::io::ReaderStream;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use tokio_stream::StreamExt;
 use url::Url;
 
-use crate::client::token::get_upload_token;
+use crate::{client::token::get_upload_token, utils::metadata::FileMetadata};
 
 pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Option<String>) -> Result<(), ()> {
 
@@ -24,6 +25,8 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
     let file_name = std::path::Path::new(&filepath).file_name().unwrap_or_default().to_string_lossy();
 
     // if we already have a token, we can skip much of the next part
+
+    let mut done = false;
 
     let upload_path = match token {
         Some(tok) => {
@@ -60,6 +63,7 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
                     return Err(());
                 }
             };
+            let check_url = format!("{server}/{}?status=true", ul.0);
 
             let send_path = match std::env::var("PROXIED_SERVER") {
                 Ok(s) => format!("{s}/{}", ul.0),
@@ -68,10 +72,47 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
 
             qr2term::print_qr(&send_path).expect("Could not generate QR code");
             println!("\nDownload is available from: {}\n\n", send_path);
+
+            // we need to keepalive!
+            thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let mut is_downloading = false;
+                    loop {
+                        let status = match reqwest::get(&check_url).await {
+                            Ok(req) => req,
+                            Err(e) => {
+                                error!("Failed to connect to server for status: {}", e);
+                                break;
+                            }
+                        };
+                
+                        match status.json::<FileMetadata>().await {
+                            Ok(meta) => {
+                                if meta.download_locked() && !is_downloading {
+                                    println!("Client has begun downloading!");
+                                    is_downloading = true;
+                                }
+                                if meta.download_finished() {
+                                    println!("done!");
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to parse download metadata. Was the upload deleted? {:?}", e);
+                                break;
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                    }
+                    println!("download ready");
+                });
+            });
+
+
             upload_path
         }
     };
-
 
     let mut reader_stream = ReaderStream::new(file);
 
@@ -118,7 +159,7 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
 
     let fin_bytes = read_so_far.clone().lock().unwrap().clone();
     if fin_bytes == file_len {
-        info!("File uploaded successfully.");
+        println!("File uploaded successfully. ({} bytes)", &fin_bytes);
     } else {
         error!(
             "Client did not successfully download the whole file {}/{} ({}%)", 

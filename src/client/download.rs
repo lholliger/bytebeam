@@ -71,7 +71,7 @@ pub async fn download_manager(server: String, auth: String, output: Option<PathB
     };
 
     // we should wait until we can verify the metadata
-
+    println!("Waiting for download...");
     loop {
         let status = match reqwest::get(format!("{download_path}?status=true")).await {
             Ok(req) => req,
@@ -93,9 +93,10 @@ pub async fn download_manager(server: String, auth: String, output: Option<PathB
                 return Err(());
             }
         }
-        println!("Waiting for download...");
+        print!(".");
         std::thread::sleep(std::time::Duration::from_secs(15));
     }
+    println!("download ready");
 
     // okay, now we can just download
 

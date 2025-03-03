@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use anyhow::Result;
 use async_stream::stream;
-use axum::{body::Body, extract::{DefaultBodyLimit, Multipart, Path, Query, State}, http::{HeaderMap, Response, StatusCode}, response::{IntoResponse, Redirect}, routing::{get, post}, Form, Json, Router};
+use axum::{body::Body, extract::{DefaultBodyLimit, Multipart, Path, Query, State}, http::{HeaderMap, Response, StatusCode}, response::{IntoResponse, Redirect}, routing::{delete, get, post}, Form, Json, Router};
 use bytesize::ByteSize;
 use maud::{html, Markup};
+use bytes::{BytesMut, BufMut};
 use tracing::{debug, error, info, warn};
 use crate::{server::appstate::AppState, utils::metadata::FileMetadata};
 
 pub async fn server(address: String, data_storage: usize, token: String) -> Result<()> {
-    const CHUNK_SIZE: usize = 4096; // this is being assumed, it shouldn't be
+    const CHUNK_SIZE: usize = 4096;
     let cache_size: usize = data_storage / CHUNK_SIZE;
 
     debug!("Cache size bytes: {}", cache_size);
@@ -19,10 +20,12 @@ pub async fn server(address: String, data_storage: usize, token: String) -> Resu
 
     let state = AppState::new(&token, cache_size);
 
+
     info!("Starting server listening on {}", address);
     let app = Router::new()
         .route("/", get(index))
         .route("/{token}", get(get_download)) // redirects to download of direct file name
+        .route("/{token}", delete(remove_file))
         .route("/{token}/{path}", get(download)) // download using certain filename, gets confused with upload path though
         .route("/{token}", post(make_upload)) // generates a new upload for a certain filename
         .route("/{token}/{path}", post(upload)) // allows upload to a given token and key, only upload generator determines file name
@@ -78,8 +81,10 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
     }
 
     if meta.download_locked() {
-        warn!("File already being downloaded, sending error");
-        return Err((StatusCode::CONFLICT, html! {"File already being downloaded"}));
+        if meta.download_finished() {
+            return Err((StatusCode::GONE, html! {"File already downloaded"}));
+        }
+        return Err((StatusCode::CONFLICT, html! {"File being downloaded"}));
     }
 
     let mut download = match state.begin_download(&token).await {
@@ -107,7 +112,9 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
                 }
             }
         }
-        warn!("Download seems to have ended prematurely"); // this line is never really reached
+        // the download is complete
+        state.end(&token).await;
+        info!("Download complete for {}", token);
     };
 
     let body = Body::from_stream(s);
@@ -145,9 +152,11 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
         return Ok(Json(meta.redact()).into_response());
     }
 
-
     if meta.download_locked() {
-        return Err((StatusCode::CONFLICT, html! {"File already being downloaded"}));
+        if meta.download_finished() {
+            return Err((StatusCode::GONE, html! {"File already downloaded"}));
+        }
+        return Err((StatusCode::CONFLICT, html! {"File being downloaded"}));
     }
 
     debug!("File is allowed for download {token}");
@@ -228,14 +237,14 @@ async fn make_upload(State(state): State<AppState>, Path(path): Path<String>, Fo
 
 // TODO: give useful output when something fails?
 #[axum::debug_handler]
-async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String, String)>, mut multipart: Multipart) { // "path" is actually the key
+async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String, String)>, mut multipart: Multipart) -> impl IntoResponse { // "path" is actually the key
     let upload = match state.begin_upload(&token, &key).await { // wont keep the metadata locked for too long, hopefully!
         Some(sender) => {
             sender
         }
         None => {
-            error!("Upload does not exist, or the password was incorrect, cannot proceed with upload");
-            return;
+            error!("Upload does not exist, it is already in progress, or the password was incorrect, cannot proceed with upload");
+            return "Upload does not exist, it is already in progress, or the password was incorrect, cannot proceed with upload".into_response();
         }
     };
 
@@ -245,7 +254,7 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
             Some(field) => field,
             None => {
                 error!("Form data incorrect, did the stream end early?");
-                return;
+                return "Form data incorrect, did the stream end early?".into_response();
             }
         };
         let name = field.name().unwrap().to_string();
@@ -263,29 +272,53 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
         // now get upload things
         let mut size = 0;
         info!("Upload to path {} had receiver... sending", name);
+
+        let mut buffer = BytesMut::new();
+
         while let Some(chunk) = field.chunk().await.unwrap() {
             size += chunk.len();
-            //trace!("Sending chunk of size: {}", chunk.len());
-            match upload.send(chunk.to_vec()).await {
-                Ok(_) => (),
-                Err(e) => {
-                    error!("Failed to send chunk: {:?}. Upload ended prematurely?", e);
-                    return;
+            buffer.put(chunk);
+
+            while buffer.len() >= state.block_size {
+                let chunk_data = buffer.split_to(state.block_size).to_vec();
+                match upload.send(chunk_data).await {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("Failed to send chunk: {:?}. Upload ended prematurely?", e);
+                        return "Failed to send a chunk... upload may have failed".into_response();
+                    }
+                }
+                if upload.is_closed() {
+                    error!("Upload failed");
+                    return "Upload failed".into_response();
                 }
             }
-            if upload.is_closed() {
-                error!("Upload failed");
-                return;
+        }
+
+        match upload.send(buffer.to_vec()).await {
+            Ok(_) => (),
+            Err(e) => {
+                error!("Failed to send final chunk: {:?}", e);
             }
         }
 
         match upload.send(vec![]).await {
             Ok(_) => (),
             Err(e) => {
-                error!("Failed to send final chunk: {:?}", e);
+                error!("Failed to send close signal: {:?}", e);
             }
         }
         info!("Sent file with size {} to token {}", size, &token);
-        return;
+        // now we can mark upload as complete
+        if state.end_upload(&token).await {
+            return format!("Done! Sent {} bytes", size).into_response();
+        } else { // this shouldn't really happen?
+            return format!("Done! Sent {} bytes, however the upload failed to be marked as complete", size).into_response();
+        }
     }
+    return format!("An error occured (form has incomplete fields)").into_response();
+}
+
+async fn remove_file(State(state): State<AppState>, Path(token): Path<String>) { // "path" is actually the key
+    state.delete(&token).await;
 }
