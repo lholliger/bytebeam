@@ -13,10 +13,10 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --features server
 
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
-COPY --from=builder /app/target/release/server /usr/local/bin
-ENTRYPOINT ["/usr/local/bin/server"]
+COPY --from=builder /app/target/release/beam /usr/local/bin
+ENTRYPOINT /usr/local/bin/beam server

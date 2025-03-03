@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "server")]
 use rand::Rng;
-use tracing::trace;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FileState {
@@ -21,6 +21,7 @@ pub struct FileMetadata {
 }
 
 impl FileMetadata {
+    #[cfg(feature = "server")]
     pub fn new() -> Self {
         FileMetadata {
             file_name: String::new(),
@@ -36,6 +37,7 @@ impl FileMetadata {
         (self.path.clone(), self.upload_key.clone())
     }
 
+    #[cfg(feature = "server")]
     pub fn upload_locked(&self) -> bool { // we cant really allow resumed uploads?
         return self.upload == FileState::InProgress
     }
@@ -44,10 +46,12 @@ impl FileMetadata {
         &self.path
     }
 
+    #[cfg(feature = "server")]
     pub fn check_key(&self, key: &String) -> bool {
         return self.upload_key == *key
     }
 
+    #[cfg(feature = "server")]
     pub fn start_upload(&mut self, key: &String) -> bool {
         if !self.check_key(key) {
             return false;
@@ -56,22 +60,27 @@ impl FileMetadata {
         true
     }
 
+    #[cfg(feature = "server")]
     pub fn start_download(&mut self) { // this is rather simple
         self.download = FileState::InProgress;
     }
 
+    #[cfg(feature = "server")]
     pub fn pause_download(&mut self) {
         self.download = FileState::Paused;
     }
 
+    #[cfg(feature = "server")]
     pub fn download_locked(&self) -> bool {
         return self.download == FileState::InProgress || self.download == FileState::Complete;
     }
 
+    #[cfg(feature = "server")]
     pub fn download_pausable(&self) -> bool {
         return self.download == FileState::InProgress;
     }
 
+    #[cfg(feature = "server")]
     fn get_secure_string() -> String {
         let mut rng = rand::rng();
         let words_raw = include_str!("../../wordlist.txt").trim(); // via https://gist.githubusercontent.com/dracos/dd0668f281e685bad51479e5acaadb93/raw/6bfa15d263d6d5b63840a8e5b64e04b382fdb079/valid-wordle-words.txt
@@ -83,8 +92,6 @@ impl FileMetadata {
         for _ in 0..3 {
             iter.push(words[rng.random_range(0..words.len())].to_string());
         }
-
-        trace!("{:?}", iter);
 
         return format!("{}-{}", rng.random_range(0..100), iter.join("-"));
     }

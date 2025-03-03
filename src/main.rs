@@ -2,13 +2,17 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, Args};
 use client::{download::download_manager, upload::upload};
 use serde::Deserialize;
-use server::server::server;
+
 use tracing::Level;
 use dotenv::dotenv;
 
 mod utils; // this is needed in both server and client
-mod server;
 mod client;
+
+#[cfg(feature = "server")]
+mod server;
+#[cfg(feature = "server")]
+use server::server::server;
 
 #[derive(Parser)]
 #[command(name = "ByteBeam")]
@@ -33,6 +37,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[cfg(feature = "server")]
     /// Runs the ByteBeam server
     Server(ServerArgs),
     
@@ -44,6 +49,7 @@ enum Commands {
 }
 
 #[derive(Args)]
+#[cfg(feature = "server")]
 struct ServerArgs {
     /// the address to listen on
     #[arg(long, value_name = "ADDRESS", default_value = "0.0.0.0:3000", env="LISTEN")]
@@ -106,9 +112,11 @@ async fn main() {
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
     match &cli.command {
+        #[cfg(feature = "server")]
         Commands::Server (args)  => {
             let _ = server(args.listen.clone(), args.cache, cli.auth.clone()).await;
         },
+
         Commands::Up (args) => {
             let _ = upload(args.server.clone(), cli.auth.clone(), args.file.clone().into(), args.token.clone()).await;
         },
