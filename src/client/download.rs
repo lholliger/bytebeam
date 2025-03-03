@@ -8,6 +8,8 @@ use urlencoding::decode;
 use tokio_stream::StreamExt;
 use tokio::io::AsyncWriteExt;
 
+use crate::utils::metadata::FileMetadata;
+
 use super::token::get_upload_token;
 
 pub async fn download_manager(server: String, auth: String, output: Option<PathBuf>, input: Option<String>, yes: bool) -> Result<(), ()> {
@@ -67,6 +69,33 @@ pub async fn download_manager(server: String, auth: String, output: Option<PathB
             // we can give the user the path to download to, as well as some curl commands
         }
     };
+
+    // we should wait until we can verify the metadata
+
+    loop {
+        let status = match reqwest::get(format!("{download_path}?status=true")).await {
+            Ok(req) => req,
+            Err(e) => {
+                error!("Failed to connect to server for status: {}", e);
+                return Err(());
+            }
+        };
+
+        match status.json::<FileMetadata>().await {
+            Ok(meta) => {
+                if !meta.download_locked() && meta.upload_locked() {
+                    println!("Download is ready!");
+                    break;
+                }
+            }
+            Err(e) => {
+                error!("Failed to parse download metadata: {}", e);
+                return Err(());
+            }
+        }
+        println!("Waiting for download...");
+        std::thread::sleep(std::time::Duration::from_secs(15));
+    }
 
     // okay, now we can just download
 

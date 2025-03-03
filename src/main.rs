@@ -63,7 +63,7 @@ struct ServerArgs {
 #[derive(Args, Deserialize)]
 struct UploadArgs {
     /// the ByteBeam server to connect to
-    #[arg(short, long, value_name = "ADDRESS", default_value = "http://localhost:3000")]
+    #[arg(short, long, value_name = "ADDRESS", env = "ADDRESS", default_value = "http://localhost:3000")]
     server: String,
 
     /// The token or URL to upload to, if not defined
@@ -77,7 +77,7 @@ struct UploadArgs {
 #[derive(Args, Deserialize)]
 struct DownloadArgs {
     /// the ByteBeam server to connect to
-    #[arg(short, long, value_name = "ADDRESS", default_value = "http://localhost:3000")]
+    #[arg(short, long, value_name = "ADDRESS", env = "ADDRESS", default_value = "http://localhost:3000")]
     server: String,
 
     /// the output to write the file. If blank, will download to the upload name

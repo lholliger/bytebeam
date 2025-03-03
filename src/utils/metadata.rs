@@ -39,7 +39,7 @@ impl FileMetadata {
 
     #[cfg(feature = "server")]
     pub fn upload_locked(&self) -> bool { // we cant really allow resumed uploads?
-        return self.upload == FileState::InProgress
+        return self.upload == FileState::InProgress || self.upload == FileState::Complete
     }
 
     pub fn get_token(&self) -> &String {
@@ -70,7 +70,6 @@ impl FileMetadata {
         self.download = FileState::Paused;
     }
 
-    #[cfg(feature = "server")]
     pub fn download_locked(&self) -> bool {
         return self.download == FileState::InProgress || self.download == FileState::Complete;
     }
@@ -78,6 +77,18 @@ impl FileMetadata {
     #[cfg(feature = "server")]
     pub fn download_pausable(&self) -> bool {
         return self.download == FileState::InProgress;
+    }
+
+    #[cfg(feature = "server")]
+    pub fn redact(&self) -> Self {
+        Self {
+            file_name: "null".to_string(), // private to downloader
+            upload_key: "null".to_string(), // private
+            file_size: 0, // rather unknown during the download
+            upload: self.upload.clone(),
+            download: self.download.clone(),
+            path: self.path.clone()
+        }
     }
 
     #[cfg(feature = "server")]

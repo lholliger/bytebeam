@@ -23,7 +23,7 @@ pub async fn server(address: String, data_storage: usize, token: String) -> Resu
     let app = Router::new()
         .route("/", get(index))
         .route("/{token}", get(get_download)) // redirects to download of direct file name
-        .route("/{token}/{path}", get(download)) // download using certain filename
+        .route("/{token}/{path}", get(download)) // download using certain filename, gets confused with upload path though
         .route("/{token}", post(make_upload)) // generates a new upload for a certain filename
         .route("/{token}/{path}", post(upload)) // allows upload to a given token and key, only upload generator determines file name
         .with_state(state)
@@ -49,6 +49,34 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
         }
     };
 
+    // we need to see if this is actually an upload
+    if meta.check_key(&path) {
+        // you cannot download using the key name, this is supposed to be POSTed to, so this will act as the landing
+        return Ok(html! { // some CSS would be nice
+            (maud::DOCTYPE);
+            html {
+                head {
+                    meta charset="utf-8";
+                    meta name="viewport" content="width=device-width, initial-scale=1.0";
+                    title {"ByteBeam File Upload" }
+                    meta property="og:title" content={"ByteBeam Web Upload"};
+                    meta property="og:description" content={"File Upload"};
+                }
+                body {
+                    h1 {"ByteBeam File Upload"}
+                    p { "You can only begin an upload once, if the upload fails you will need to ask for a new upload link"}
+                    form method="POST" action=(format!("/{token}/{path}")) enctype="multipart/form-data" {
+                        input name="file" type="file";
+                        input type="submit" value="Upload";
+                    }
+                    p {"You can also upload the file using curl"}
+                    tt {"curl -F 'file=@/path/to/file' http://this-url/and/path" }
+                    // now we need to do the form. There should maybe be a JS progress bar or something...
+                }
+            }
+            }.into_response());
+    }
+
     if meta.download_locked() {
         warn!("File already being downloaded, sending error");
         return Err((StatusCode::CONFLICT, html! {"File already being downloaded"}));
@@ -68,6 +96,7 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
             match data {
                 Some(data) => {
                     if data.is_empty() {
+                        // the download is complete! TODO: set state
                         break;
                     }
                     yield Ok(data);
@@ -104,6 +133,19 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
         }
     };
 
+    let return_metadata: bool = match params.get("status") {
+        Some(m_str) => match m_str.parse() {
+            Ok(q) => q,
+            Err(_) => false
+        },
+        None => false
+    };
+
+    if return_metadata {
+        return Ok(Json(meta.redact()).into_response());
+    }
+
+
     if meta.download_locked() {
         return Err((StatusCode::CONFLICT, html! {"File already being downloaded"}));
     }
@@ -135,12 +177,12 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
                 head {
                     meta charset="utf-8";
                     meta name="viewport" content="width=device-width, initial-scale=1.0";
-                    title {"Single-Use File Download: " (&meta.file_name) }
-                    meta property="og:title" content={"Single-Use File Download"};
+                    title {"ByteBeam File Download: " (&meta.file_name) }
+                    meta property="og:title" content={"ByteBeam File Download"};
                     meta property="og:description" content={"File download for " (&meta.file_name) " [" (&file_size_string) "]"};
                 }
                 body {
-                    h1 {"Single-Use File Download"}
+                    h1 {"ByteBeam File Download"}
                     p { "This download can only be started once. If it fails, you will need to ask the sender to re-upload"}
                     ul {
                         li {"File name: " (&meta.file_name)}
@@ -158,7 +200,7 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
     // nothing is locked so we can just redirect
 
     debug!("Redirecting download to {token}/{}", meta.file_name);
-    Ok(Redirect::temporary(format!("/{token}/{}", meta.file_name).as_str()))
+    Ok(Redirect::temporary(format!("/{token}/{}", meta.file_name).as_str()).into_response())
 
 }
 

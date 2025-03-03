@@ -99,8 +99,10 @@ The URL you upload to is the URL you download from currently. Uploading is a POS
         - is there an easy way to do key exchange without both people needing the client?
     - Allow for decryption using built-in tools when downloading using openssl and curl
 - [ ] Hold client state in some config instead of needing envionment variables for all usage
-- [ ] Move server as a feature to remove unneeded features for those only using the client
+- [x] Move server as a feature to remove unneeded features for those only using the client
 - [ ] Possibly do away with the "secret" so that one value is for upload and another is for download
     - could be confusing if there is more than one "token" per upload/download pair
 - [ ] Reduce CPU usage/increase speed
-- [ ] HTML upload page, CURL instructions
+- [x] HTML upload page, CURL instructions
+- [ ] Give feedback after upload
+- [x] Keepalive when doing reverse upload
