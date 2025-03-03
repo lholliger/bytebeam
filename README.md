@@ -76,19 +76,20 @@ The URL you upload to is the URL you download from currently. Uploading is a POS
     - currently just uploads and holds, should give some server-side updates
     - Perhaps could be done with some other HTTP requests that give status but are not required
 - [ ] Restart on fail as an option
-    - Redirect client to a unique url which claims the MPSC?
+    - System needs to somehow put the mpsc back. Using broadcast leads to issues starting
 - [ ] Handle upload/download dying quickly
     - client currently seems to infinitely upload if the reader dies
     - prelimiary resume works, but seems to lose some data, may need to be client implementation
+    - under current mpsc the connection seems to just fail
 - [x] Download link should give landing page instead of immediate download
 - [ ] Get file size from request instead of a form option
 - [ ] Add some query args on upload to add some requirements/uptions
-- [ ] Allow for reverse uploading/creation of single-use upload keys
-    - Reverse process where the listener is consumed first by the initiator
-    - Allow for a simple upload interface
+- [x] Allow for reverse uploading/creation of single-use upload keys
+    - still needs client implementation
 - [ ] Better front end
     - Management of what's currently active, memory usage, etc
 - [ ] A concept of multi-user instead of single auth key
+    - uploads still created by single person, however multiple uploads allowed
 - [ ] Smarter cache instead of assuming 4096 byte chunks
     - also adding management of cache size
 - [ ] Expiry of uploads that are entirely within cache after a given time
@@ -99,3 +100,7 @@ The URL you upload to is the URL you download from currently. Uploading is a POS
     - Allow for decryption using built-in tools when downloading using openssl and curl
 - [ ] Hold client state in some config instead of needing envionment variables for all usage
 - [ ] Move server as a feature to remove unneeded features for those only using the client
+- [ ] Possibly do away with the "secret" so that one value is for upload and another is for download
+    - could be confusing if there is more than one "token" per upload/download pair
+- [ ] Reduce CPU usage/increase speed
+- [ ] HTML upload page, CURL instructions

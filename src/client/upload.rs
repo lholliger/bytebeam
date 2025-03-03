@@ -6,11 +6,11 @@ use reqwest::Body;
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info};
 use tokio_stream::StreamExt;
+use url::Url;
 
-use crate::utils::metadata::FileMetadata;
+use crate::client::token::get_upload_token;
 
-#[tokio::main]
-pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<(), ()> {
+pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Option<String>) -> Result<(), ()> {
 
     // open file for streaming
     let file = tokio::fs::File::open(&filepath).await.unwrap();
@@ -23,47 +23,59 @@ pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<(
     // get file name from path
     let file_name = std::path::Path::new(&filepath).file_name().unwrap_or_default().to_string_lossy();
 
-    let encoded_file = urlencoding::encode(&file_name);
-    let upload_path = format!("{server}/{encoded_file}");
+    // if we already have a token, we can skip much of the next part
 
-    // so we need to get the download
-
-    //info!("Download available from: {send_path}");
-
-    let params = [("authentication", auth), ("file-size", file_len.to_string())];
-
-    let client = reqwest::Client::new();
-    let res = client.post(upload_path)
-        .form(&params)
-        .send().await;
-
-    debug!("Request: {:?}", res);
-
-    let metadata: FileMetadata = match res {
-        Ok(response) => {
-            if !response.status().is_success() {
-                error!(
-                    "Non-success response from Beam server: {:?}", response.text().await
-                );
-                return Err(());
-            }
-            match response.json::<FileMetadata>().await {
-                Ok(metadata) => metadata,
-                Err(e) => {
-                    error!("Failed to parse file metadata: {:?}.", e);
-                    return Err(());
+    let upload_path = match token {
+        Some(tok) => {
+            match Url::parse(&tok) {
+                Ok(u) => u,
+                Err(_) => match Url::parse(format!("{server}/{tok}").as_str()) {
+                    Ok(u) => u,
+                    Err(_) => {
+                        error!("Invalid upload URL: {}", tok);
+                        return Err(());
+                    },
                 }
             }
         },
-        Err(e) => {
-            error!("Failed to connect to Beam server: {:?}", e);
-            return Err(());
+        None => {
+            let encoded_file = urlencoding::encode(&file_name);
+            let upload_path = format!("{server}/{encoded_file}");
+        
+            // so we need to get the download
+        
+            let metadata = match get_upload_token(auth, file_len as usize, upload_path).await {
+                Some(metadata) => metadata,
+                None => {
+                    error!("Failed to get upload token");
+                    return Err(());
+                }
+            };
+        
+            let ul = metadata.get_upload_info();
+            let upload_path = match Url::parse(format!("{server}/{}/{}", ul.0, ul.1).as_str()) {
+                Ok(u) => u,
+                Err(e) => {
+                    error!("Invalid URL, is the server correct? {:?}", e);
+                    return Err(());
+                }
+            };
+
+            let send_path = match std::env::var("PROXIED_SERVER") {
+                Ok(s) => format!("{s}/{}", ul.0),
+                Err(_) => format!("{server}/{}", ul.0)
+            };
+
+            qr2term::print_qr(&send_path).expect("Could not generate QR code");
+            println!("\nDownload is available from: {}\n\n", send_path);
+            upload_path
         }
     };
 
-    debug!("File metadata received: {:?}", metadata);
 
     let mut reader_stream = ReaderStream::new(file);
+
+    // okay, now we just upload
 
     let bar = ProgressBar::new(file_len as u64);
     bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes:>7}/{total_bytes:7} {msg}")
@@ -82,22 +94,13 @@ pub async fn client(server: String, auth: String, filepath: PathBuf) -> Result<(
             yield chunk;
         }
     };
-
-    let ul = metadata.get_upload_info();
-    let upload_path = format!("{server}/{}/{}", ul.0, ul.1);
-    let send_path = match std::env::var("PROXIED_SERVER") {
-        Ok(s) => format!("{s}/{}", ul.0),
-        Err(_) => format!("{server}/{}", ul.0)
-    };
-
-    info!("Download is available from: {}", send_path);
     
     let client = reqwest::Client::new();
     let form = reqwest::multipart::Form::new()
         .text("file-size", file_len.to_string())
         .part("file", reqwest::multipart::Part::stream(Body::wrap_stream(async_stream)));
 
-    match client.post(&upload_path)
+    match client.post(upload_path)
         .multipart(form)
         .send().await {
             Ok(response) => {

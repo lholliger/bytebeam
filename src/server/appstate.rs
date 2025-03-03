@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex};
-use tracing::{info, trace};
 
 use crate::utils::metadata::FileMetadata;
 
@@ -29,20 +28,14 @@ impl AppState {
         if *token != self.token {
             return None;
         }
-        trace!("generate_file_upload getting elements");
         let mut uploads = self.uploads.lock().await;
         let mut downloads = self.downloads.lock().await;
         let mut meta = self.files.lock().await;
-        trace!("Creating tx");
         let (tx, rx) = channel(self.cache_size);
-        trace!("Creating new token for upload");
     
         let mut upload = FileMetadata::new();
 
-        trace!("Setting file name");
         upload.file_name = file_name.clone();
-
-        trace!("Inserting into uploads and downloads");
     
         uploads.insert(upload.get_token().clone(), tx);
         downloads.insert(upload.get_token().clone(), rx);
@@ -69,10 +62,10 @@ impl AppState {
                         return None;
                 } else {
                     // okay, we've verified the upload so now we can lock it
-                    match self.uploads.lock().await.remove(ticket) {
+                    match self.uploads.lock().await.get(ticket) {
                         Some(tx) => {
                             meta.start_upload(lock);
-                            Some(tx) // yay!
+                            Some(tx.clone()) // yay!
                         },
                         None => None
                     }

@@ -7,8 +7,6 @@ use maud::{html, Markup};
 use tracing::{debug, error, info, warn};
 use crate::{server::appstate::AppState, utils::metadata::FileMetadata};
 
-
-#[tokio::main]
 pub async fn server(address: String, data_storage: usize, token: String) -> Result<()> {
     const CHUNK_SIZE: usize = 4096; // this is being assumed, it shouldn't be
     let cache_size: usize = data_storage / CHUNK_SIZE;
@@ -59,7 +57,7 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
     let mut download = match state.begin_download(&token).await {
         Some(dl) => dl,
         None => {
-            error!("File is unlocked down download cannot begin");
+            error!("File is unlocked however the stream could not be obtained");
             return Err((StatusCode::INTERNAL_SERVER_ERROR, html! {"Internal Server Error"})) // this file should be freed!
         }
     };
@@ -79,8 +77,8 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
                     break;
                 }
             }
-
         }
+        warn!("Download seems to have ended prematurely"); // this line is never really reached
     };
 
     let body = Body::from_stream(s);
@@ -229,7 +227,7 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
             match upload.send(chunk.to_vec()).await {
                 Ok(_) => (),
                 Err(e) => {
-                    error!("Failed to send chunk: {:?}", e);
+                    error!("Failed to send chunk: {:?}. Upload ended prematurely?", e);
                     return;
                 }
             }
