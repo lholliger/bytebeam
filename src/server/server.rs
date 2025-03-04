@@ -313,6 +313,7 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
         if state.end_upload(&token).await {
             return format!("Done! Sent {} bytes", size).into_response();
         } else { // this shouldn't really happen?
+            error!("Had an issue marking the download as ended");
             return format!("Done! Sent {} bytes, however the upload failed to be marked as complete", size).into_response();
         }
     }

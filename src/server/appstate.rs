@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, thread};
 use chrono::Duration;
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex};
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use crate::utils::metadata::FileMetadata;
 
@@ -200,7 +200,7 @@ impl AppState {
        true
     }
 
-    pub async fn cull(&self) -> usize{
+    pub async fn cull(&self) -> usize {
         std::thread::sleep(std::time::Duration::from_secs(10));
         trace!("Trying cull...");
         let meta = self.files.lock().await;

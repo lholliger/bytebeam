@@ -1,5 +1,4 @@
-use std::{io, path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
-use std::io::Write;
+use std::{path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
 use async_stream::stream;
 use bytesize::ByteSize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -26,7 +25,7 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
 
     // if we already have a token, we can skip much of the next part
 
-    let mut done = false;
+    let mut thread: Option<std::thread::JoinHandle<()>> = None;
 
     let upload_path = match token {
         Some(tok) => {
@@ -74,7 +73,7 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
             println!("\nDownload is available from: {}\n\n", send_path);
 
             // we need to keepalive!
-            thread::spawn(move || {
+            thread = Some(thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
                     let mut is_downloading = false;
@@ -105,9 +104,8 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
                         }
                         std::thread::sleep(std::time::Duration::from_secs(10));
                     }
-                    println!("download ready");
                 });
-            });
+            }));
 
 
             upload_path
@@ -167,6 +165,14 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
             ByteSize(file_len).to_string_as(true),
             ((fin_bytes as f64 / file_len as f64) * 100.0).round() as u8
         );
+    }
+
+    match thread {
+        Some(thread) => {
+            println!("Waiting for client to download...");
+            thread.join().unwrap();
+        },
+        None => {}
     }
 
     Ok(())
