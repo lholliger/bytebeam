@@ -71,7 +71,7 @@ The URL you upload to is the URL you download from currently. Uploading is a POS
 - [x] Upload should be its own little rust program on my side so a link can be auto generated for the content
 - [x] Server side caching if requested
 - [ ] Streaming a folder through tar.gz/zip
-- [ ] Streaming input
+- [x] Streaming input
 - [ ] Client start/better progress
     - currently just uploads and holds, should give some server-side updates
     - Perhaps could be done with some other HTTP requests that give status but are not required

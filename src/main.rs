@@ -70,6 +70,11 @@ struct UploadArgs {
     #[arg(short, long)]
     token: Option<String>,
 
+
+    /// Optional filename to override for the upload
+    #[arg(short, long)]
+    name: Option<String>,
+
     /// the file to beam
     file: String,
 }
@@ -190,7 +195,7 @@ async fn main() {
                     }
                 }
             }
-            let _ = upload(args.server.clone(), cli.auth.clone(), args.file.clone().into(), args.token.clone()).await;
+            let _ = upload(args.server.clone(), cli.auth.clone(), args.file.clone().into(), args.token.clone(), args.name).await;
         },
         Commands::Down (mut args) => {
             if config.is_some() { // TODO: dont duplicate code here

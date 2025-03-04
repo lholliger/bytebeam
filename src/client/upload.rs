@@ -1,27 +1,44 @@
 use std::{path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
 use async_stream::stream;
+use bytes::Bytes;
 use bytesize::ByteSize;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Body;
+use tokio::io;
 use tokio_util::io::ReaderStream;
-use tracing::{debug, error};
-use tokio_stream::StreamExt;
+use tracing::{debug, error, warn};
+use tokio_stream::{Stream, StreamExt};
 use url::Url;
 
 use crate::{client::token::get_upload_token, utils::metadata::FileMetadata};
 
-pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Option<String>) -> Result<(), ()> {
+pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Option<String>, name_override: Option<String>) -> Result<(), ()> {
 
-    // open file for streaming
-    let file = tokio::fs::File::open(&filepath).await.unwrap();
+    let mut file_name = "bytebeam".to_string();
+    let mut file_len = 0;
 
-    // get file length
-    let file_len = file.metadata().await.expect("Could not read metadata").len();
+    let mut reader_stream = if !filepath.exists() {
+        let filepath_str = filepath.to_str().expect("Could not convert path to string");
+        if filepath_str == "-" {
+            if name_override.is_none() {
+                warn!("No file name specified. Defaulting to \"bytebeam\". This can be defined using --name [FILENAME]");
+            }
+            debug!("Reading from stdin...");
+            Box::new(ReaderStream::new(Box::new(tokio::io::stdin()))) as Box<dyn Stream<Item = Result<Bytes, io::Error>> + Unpin + Send>
+        } else {
+            error!("Path does not exist: {}", filepath_str);
+            return Err(());
+        }
+    } else {
+        let file = tokio::fs::File::open(&filepath).await.unwrap();
+        file_len = file.metadata().await.expect("Could not read metadata").len();
+        debug!("Found file length: {}", ByteSize(file_len).to_string_as(true));
+        file_name = std::path::Path::new(&filepath).file_name().unwrap_or_default().to_string_lossy().to_string();
+        
+        Box::new(ReaderStream::new(file)) as Box<dyn Stream<Item = Result<Bytes, io::Error>> + Unpin + Send>
+    };
 
-    debug!("Found file length: {}", ByteSize(file_len).to_string_as(true));
 
-    // get file name from path
-    let file_name = std::path::Path::new(&filepath).file_name().unwrap_or_default().to_string_lossy();
 
     // if we already have a token, we can skip much of the next part
 
@@ -41,7 +58,11 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
             }
         },
         None => {
-            let encoded_file = urlencoding::encode(&file_name);
+            let encoded_file = match name_override {
+                Some(name) => urlencoding::encode(&name).to_string(),
+                None => urlencoding::encode(&file_name).to_string(),
+            };
+
             let upload_path = format!("{server}/{encoded_file}");
         
             // so we need to get the download
@@ -111,9 +132,6 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
             upload_path
         }
     };
-
-    let mut reader_stream = ReaderStream::new(file);
-
     // okay, now we just upload
 
     let bar = ProgressBar::new(file_len as u64);
@@ -158,6 +176,8 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
     let fin_bytes = read_so_far.clone().lock().unwrap().clone();
     if fin_bytes == file_len {
         println!("File uploaded successfully. ({} bytes)", &fin_bytes);
+    } else if fin_bytes > file_len {
+        // TODO: we should update the total
     } else {
         error!(
             "Client did not successfully download the whole file {}/{} ({}%)", 
