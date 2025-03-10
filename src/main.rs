@@ -16,7 +16,7 @@ use server::server::server;
 
 #[derive(Parser, Deserialize, Debug)]
 #[command(name = "ByteBeam")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(propagate_version = true)]
 struct Cli {
     #[command(subcommand)]

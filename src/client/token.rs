@@ -1,4 +1,4 @@
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::utils::metadata::FileMetadata;
 
@@ -19,6 +19,19 @@ pub async fn get_upload_token(auth: String, file_len: usize, request_path: Strin
                     "Non-success response from Beam server: {:?}", response.text().await
                 );
                 return None;
+            }
+            let wanted_version = format!("ByteBeam/{}", env!("CARGO_PKG_VERSION"));
+            // warn if the versions are different
+            match response.headers().get("server") {
+                Some(version) => match version.to_str() {
+                    Ok(version_str) => if version_str != wanted_version {
+                        warn!("ByteBeam Server version does not match the expected version. It may be outdated and there may be instability! Got {}, wanted {}", version_str, wanted_version);
+                    }
+                    Err(_) => warn!("ByteBeam Server did not return a proper version string. It may be outdated and there may be instability!")
+                }
+                None => {
+                    warn!("ByteBeam Server did not return a version. It may be outdated and there may be instability!");
+                }
             }
             match response.json::<FileMetadata>().await {
                 Ok(metadata) => metadata,

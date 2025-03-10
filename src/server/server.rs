@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use anyhow::Result;
 use async_stream::stream;
-use axum::{body::Body, extract::{DefaultBodyLimit, Multipart, Path, Query, State}, http::{HeaderMap, Response, StatusCode}, response::{IntoResponse, Redirect}, routing::{delete, get, post}, Form, Json, Router};
+use axum::{body::Body, extract::{DefaultBodyLimit, Multipart, Path, Query, State}, http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode}, response::{IntoResponse, Redirect}, routing::{delete, get, post}, Form, Json, Router};
 use bytesize::ByteSize;
 use maud::{html, Markup};
 use bytes::{BytesMut, BufMut};
 use tracing::{debug, error, info, warn};
 use crate::{server::appstate::AppState, utils::metadata::FileMetadata};
+use tower_http::set_header::SetResponseHeaderLayer;
 
 pub async fn server(address: String, data_storage: usize, token: String) -> Result<()> {
     const CHUNK_SIZE: usize = 4096;
@@ -30,7 +31,12 @@ pub async fn server(address: String, data_storage: usize, token: String) -> Resu
         .route("/{token}", post(make_upload)) // generates a new upload for a certain filename
         .route("/{token}/{path}", post(upload)) // allows upload to a given token and key, only upload generator determines file name
         .with_state(state)
-        .layer(DefaultBodyLimit::max(1024*1024*1024*100));
+        .layer(DefaultBodyLimit::max(1024*1024*1024*100))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("server"),
+            HeaderValue::from_str(&format!("ByteBeam/{}", env!("CARGO_PKG_VERSION")))
+                .unwrap(),
+        ));
 
     let listener = tokio::net::TcpListener::bind(address).await.expect("Could not listen to port");
     axum::serve(listener, app).await?;

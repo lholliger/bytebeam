@@ -134,7 +134,9 @@ When doing `beam down -o filename`, the page given is web-accessible allow for a
 - [ ] Better front end
     - Management of what's currently active, memory usage, etc
 - [ ] A concept of multi-user instead of single auth key
-    - uploads still created by single person, however multiple uploads allowed
+    - using SSH key signing
+    - allow optional unauthenticated user usage with rate limits
+- [ ] Feature for github SSH keys
 - [x] Smarter cache instead of assuming 4096 byte chunks
     - also adding management of cache size
 - [x] Expiry of uploads that are entirely within cache after a given time
