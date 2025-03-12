@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-use clap::{Parser, Subcommand, Args};
-use client::{download::download_manager, upload::upload};
+use std::path::Path;
+use clap::{Parser, Subcommand};
+use client::{download::download_manager, upload::upload, ClientConfig, DownloadArgs, UploadArgs};
 use serde::Deserialize;
-use tracing::{error, trace, Level};
+use tracing::{error, Level};
 use dotenv::dotenv;
 
 mod utils; // this is needed in both server and client
@@ -11,7 +11,9 @@ mod client;
 #[cfg(feature = "server")]
 mod server;
 #[cfg(feature = "server")]
-use server::server::{ServerConfig, server};
+use server::server::server;
+#[cfg(feature = "server")]
+use server::{ServerConfig, ServerArgs};
 
 #[derive(Parser, Deserialize, Debug)]
 #[command(name = "ByteBeam")]
@@ -43,66 +45,6 @@ enum Commands {
     Down(DownloadArgs)
 }
 
-#[derive(Args, Deserialize, Debug)]
-#[cfg(feature = "server")]
-struct ServerArgs {
-    /// the address to listen on
-    #[arg(long, value_name = "ADDRESS", default_value = "0.0.0.0:3000", env="LISTEN")]
-    listen: String,
-
-    /// the size, in bytes, to cache each file in memory for read
-    #[arg(short, long, value_name = "BYTES", default_value = "1073741824", env="CACHE_SIZE")]
-    cache: usize
-}
-
-#[derive(Args, Deserialize, Debug)]
-struct UploadArgs {
-    /// the ByteBeam server to connect to
-    #[arg(short, long, value_name = "ADDRESS", env = "ADDRESS", default_value = "http://localhost:3000")]
-    server: String,
-
-    /// The token or URL to upload to, if not defined
-    #[arg(short, long)]
-    token: Option<String>,
-
-    /// Optional filename to override for the upload
-    #[arg(short, long)]
-    name: Option<String>,
-
-    /// Username to authenticate against
-    #[arg(short, long, default_value = "default")]
-    username: String,
-
-    /// the file to beam
-    file: String,
-}
-
-#[derive(Args, Deserialize, Debug)]
-struct DownloadArgs {
-    /// the ByteBeam server to connect to
-    #[arg(short, long, value_name = "ADDRESS", env = "ADDRESS", default_value = "http://localhost:3000")]
-    server: String,
-
-    /// the output to write the file. If blank, will download to the upload name
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    /// Username to authenticate against
-    #[arg(short, long, default_value = "default")]
-    username: String,
-
-    /// Path for a key or keys to sign with
-    #[arg(short, long, default_value = "~/.ssh")]
-    key: String,
-
-    /// Overwrite if needed
-    #[arg(short, long)]
-    yes: bool,
-
-    /// The URL/token to download. If blank, create a reverse-upload
-    path: Option<String>,
-}
-
 #[derive(Deserialize, Debug, Clone)]
 struct Config {
     client: Option<ClientConfig>,
@@ -111,16 +53,10 @@ struct Config {
     server: Option<ServerConfig>
 }
 
-#[derive(Deserialize, Debug, Clone)]
-struct ClientConfig {
-    server: Option<String>,
-    username: Option<String>
-}
-
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    let mut cli: Cli = Cli::parse();
+    let cli: Cli = Cli::parse();
 
     let subscriber_level = match cli.loglevel.to_ascii_uppercase().as_str() {
         "TRACE" => Level::TRACE,
@@ -154,57 +90,35 @@ async fn main() {
 
     match cli.command {
         #[cfg(feature = "server")]
-        Commands::Server (mut args)  => {
-            /*if config.is_some() {
-                let cs = config.unwrap();
-                if cs.server.is_some() {
-                    let server_args = cs.server.unwrap();
-                    if server_args.listen.is_some() {
-                        args.listen = server_args.listen.unwrap();
-                        trace!("Using config server listen: {}", args.listen);
-                    }
-                    if server_args.cache.is_some() {
-                        args.cache = server_args.cache.unwrap();
-                        trace!("Using config server cache: {}", args.cache);
-                    }
+        Commands::Server (args)  => {
+            let config = if let Some(kconfig) = config {
+                if let Some(mut sconfig) = kconfig.server {
+                     sconfig.apply_args(args);
+                     sconfig
+                } else {
+                    ServerConfig::default()
                 }
-            }*/
-            let _ = server(config.expect("No config defined").server.expect("No server config defined")).await;
+            } else {
+                ServerConfig::default()
+            };
+            let _ = server(config).await;
         },
 
         Commands::Up (mut args) => {
-            if config.is_some() {
-                let cs: Config = config.unwrap();
-                if cs.client.is_some() {
-                    let c_args = cs.client.unwrap();
-                    if c_args.server.is_some() {
-                        args.server = c_args.server.unwrap();
-                        trace!("Using config server: {}", args.server);
-                    }
-                    if c_args.username.is_some() {
-                        args.username = c_args.username.unwrap();
-                        trace!("Using config username: {}", args.username);
-                    }
+            if let Some(kconfig) = config {
+                if let Some(cconfig) = kconfig.client {
+                    args.args.merge(cconfig);
                 }
             }
-            let _ = upload(args.server.clone(), args.username.clone(), args.file.clone().into(), args.token.clone(), args.name).await;
+            let _ = upload(args).await;
         },
         Commands::Down (mut args) => {
-            if config.is_some() { // TODO: dont duplicate code here
-                let cs = config.unwrap();
-                if cs.client.is_some() {
-                    let c_args = cs.client.unwrap();
-                    if c_args.server.is_some() {
-                        args.server = c_args.server.unwrap();
-                        trace!("Using config server: {}", args.server);
-                    }
-                    if c_args.username.is_some() {
-                        args.username = c_args.username.unwrap();
-                        trace!("Using config username: {}", args.username);
-                    }
+            if let Some(kconfig) = config {
+                if let Some(cconfig) = kconfig.client {
+                    args.args.merge(cconfig);
                 }
             }
-           let _ = download_manager(args.server.clone(), args.username.clone(), args.output.clone(), args.path.clone(), args.yes).await;
+           let _ = download_manager(args).await;
         }
     }
 }

@@ -6,21 +6,12 @@ use bytesize::ByteSize;
 use chrono::{Duration, TimeDelta};
 use maud::{html, Markup};
 use bytes::{BytesMut, BufMut};
-use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 use crate::{server::appstate::AppState, utils::metadata::FileMetadata};
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use super::serveropts::ServerOptions;
+use super::{serveropts::ServerOptions, ServerConfig};
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct ServerConfig {
-    listen: Option<String>,
-    public_options: Option<ServerOptions>,
-    authenticated_options: Option<ServerOptions>,
-    keyserver: Option<String>,
-    users: Vec<String>
-}
 
 
 pub async fn server(config: ServerConfig) -> Result<()> {

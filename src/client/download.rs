@@ -1,4 +1,4 @@
-use std::{io, io::Write, path::PathBuf, time::Duration};
+use std::{io, io::Write, time::Duration};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio::fs::File;
@@ -10,10 +10,10 @@ use tokio::io::AsyncWriteExt;
 
 use crate::utils::metadata::FileMetadata;
 
-use super::token::get_upload_token;
-
-pub async fn download_manager(server: String, username: String, output: Option<PathBuf>, input: Option<String>, yes: bool) -> Result<(), ()> {
-    let download_path = match input {
+use super::{token::get_upload_token, DownloadArgs};
+pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
+    let (server, username, key) = config.args.get_absolute();    
+    let download_path = match config.path {
         Some(piece) => {
             let url = match Url::parse(&piece) {
                 Ok(url) => url,
@@ -30,12 +30,12 @@ pub async fn download_manager(server: String, username: String, output: Option<P
             url
         },
         None => {
-            if output.is_none() {
+            if config.output.is_none() {
                 error!("No input or output provided. Please provide a Beam code and/or a path to download to.");
                 return Err(());
             }
             // this is weird since a filename needs to be provided, as its defined here
-            let op = output.clone().unwrap();
+            let op = config.output.clone().unwrap();
             let file_name = std::path::Path::new(&op).file_name().unwrap_or_default().to_string_lossy();
             let encoded_file = urlencoding::encode(&file_name);
             let download_path = format!("{server}/{encoded_file}");
@@ -117,7 +117,7 @@ pub async fn download_manager(server: String, username: String, output: Option<P
 
     // can we get the file name?
 
-    let write_path = match output {
+    let write_path = match config.output {
         Some(op) => op,
         None => {
             match request.url().path_segments().and_then(|segments| segments.last()) {
@@ -136,7 +136,7 @@ pub async fn download_manager(server: String, username: String, output: Option<P
         }
     };
 
-    if write_path.exists() && !yes {
+    if write_path.exists() && !config.yes {
         print!("File already exists: {:?}. Overwrite? [y/N] ", write_path);
         io::stdout().flush().expect("Could not flush stdout");
         

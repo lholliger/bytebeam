@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
+use std::{sync::{Arc, Mutex}, thread, time::Duration};
 use async_stream::stream;
 use bytes::Bytes;
 use bytesize::ByteSize;
@@ -12,7 +12,14 @@ use url::Url;
 
 use crate::{client::token::get_upload_token, utils::metadata::FileMetadata};
 
-pub async fn upload(server: String, username: String, filepath: PathBuf, token: Option<String>, name_override: Option<String>) -> Result<(), ()> {
+use super::UploadArgs;
+
+pub async fn upload(config: UploadArgs) -> Result<(), ()> {
+//pub async fn upload(server: String, username: String, filepath: PathBuf, token: Option<String>, name_override: Option<String>) -> Result<(), ()> {
+    let filepath = config.get_file_path();
+    let (server, username, key) = config.args.get_absolute();
+
+    let token = config.token;
 
     let mut file_name = "bytebeam".to_string();
     let mut file_len = 0;
@@ -20,7 +27,7 @@ pub async fn upload(server: String, username: String, filepath: PathBuf, token: 
     let mut reader_stream = if !filepath.exists() {
         let filepath_str = filepath.to_str().expect("Could not convert path to string");
         if filepath_str == "-" {
-            if name_override.is_none() {
+            if config.name.is_none() {
                 warn!("No file name specified. Defaulting to \"bytebeam\". This can be defined using --name [FILENAME]");
             }
             debug!("Reading from stdin...");
@@ -58,7 +65,7 @@ pub async fn upload(server: String, username: String, filepath: PathBuf, token: 
             }
         },
         None => {
-            let encoded_file = match name_override {
+            let encoded_file = match config.name {
                 Some(name) => urlencoding::encode(&name).to_string(),
                 None => urlencoding::encode(&file_name).to_string(),
             };
