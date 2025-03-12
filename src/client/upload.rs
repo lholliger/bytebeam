@@ -12,7 +12,7 @@ use url::Url;
 
 use crate::{client::token::get_upload_token, utils::metadata::FileMetadata};
 
-pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Option<String>, name_override: Option<String>) -> Result<(), ()> {
+pub async fn upload(server: String, username: String, filepath: PathBuf, token: Option<String>, name_override: Option<String>) -> Result<(), ()> {
 
     let mut file_name = "bytebeam".to_string();
     let mut file_len = 0;
@@ -67,13 +67,17 @@ pub async fn upload(server: String, auth: String, filepath: PathBuf, token: Opti
         
             // so we need to get the download
         
-            let metadata = match get_upload_token(auth, file_len as usize, upload_path).await {
+            let metadata = match get_upload_token(&username, file_len as usize, upload_path).await {
                 Some(metadata) => metadata,
                 None => {
                     error!("Failed to get upload token");
                     return Err(());
                 }
             };
+
+            if username != "default".to_string() {
+
+            }
         
             let ul = metadata.get_upload_info();
             let upload_path = match Url::parse(format!("{server}/{}/{}", ul.0, ul.1).as_str()) {

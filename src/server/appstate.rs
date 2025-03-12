@@ -1,32 +1,31 @@
 use std::{collections::HashMap, sync::Arc, thread};
-use chrono::Duration;
+use reqwest::StatusCode;
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex};
 use tracing::{debug, trace};
 
 use crate::utils::metadata::FileMetadata;
 
+use super::{keymanager::KeyManager, serveropts::ServerOptions};
+
 #[derive(Debug, Clone)]
 pub struct AppState {
-    token: String,
     files: Arc<Mutex<HashMap<String, FileMetadata>>>,
     downloads: Arc<Mutex<HashMap<String, Receiver<Vec<u8>>>>>,
     uploads: Arc<Mutex<HashMap<String, Sender<Vec<u8>>>>>,
-    cache_size: usize,
-    pub block_size: usize,
-    cull_time: Duration
+    reg_options: ServerOptions, // for all users w/o keysigning
+    auth_options: ServerOptions, // for verified users
+    keys: KeyManager
 }
 
-
 impl AppState {
-    pub fn new(token: &String, cache_size: usize) -> Self {
+    pub async fn new(reg_options: ServerOptions, auth_options: ServerOptions, keyserver: Option<String>, users: Vec<String>) -> Self {
         let state = AppState {
-            token: token.clone(),
             files: Arc::new(Mutex::new(HashMap::new())),
             downloads: Arc::new(Mutex::new(HashMap::new())),
             uploads: Arc::new(Mutex::new(HashMap::new())),
-            cache_size,
-            block_size: 4096,
-            cull_time: Duration::hours(1)
+            keys: KeyManager::new_checking_keyserver(keyserver, users).await,
+            reg_options,
+            auth_options
         };
 
         let cull_state = state.clone();
@@ -47,27 +46,73 @@ impl AppState {
         state
     }
 
-    pub async fn generate_file_upload(&self, token: &String, file_name: &String) -> Option<FileMetadata> {
-        if *token != self.token {
-            return None;
-        }
+    pub async fn generate_file_upload(&self, file_name: &String, user: Option<&String>) -> Option<FileMetadata> {
         let mut uploads = self.uploads.lock().await;
         let mut downloads = self.downloads.lock().await;
         let mut meta = self.files.lock().await;
-        let (tx, rx) = channel(self.cache_size);
+        let (tx, rx) = channel(self.reg_options.get_cache_size()); // TODO: this should be a whole pool instead of just per-request
     
-        let mut upload = FileMetadata::new();
+        let mut upload = FileMetadata::new(&self.reg_options, user);
 
-        upload.file_name = file_name.clone();
+        upload.file_name = file_name.clone();//.split_off(40);
     
         uploads.insert(upload.get_token().clone(), tx);
         downloads.insert(upload.get_token().clone(), rx);
 
-        meta.insert(upload.get_token().clone(), upload.clone());
-
-        // we also need to loosely make sure the upload is authenticated, so upload should be tied to another key
-        
+        meta.insert(upload.get_token().clone(), upload.clone());        
         Some(upload)
+    }
+
+    // this will upgrade the user's file upload if their authentication challenge succeeds
+    pub async fn upgrade(&self, ticket: &String, challenge_response: &String) -> Option<FileMetadata> {
+        let mut meta = self.files.lock().await;
+        let file = meta.get_mut(ticket);
+        match file {
+            Some(file) => {
+                match file.get_challenge_details() {
+                    Some((authenticated, user, challenge)) => {
+                        if authenticated {
+                            // its already upgraded
+                            return Some(file.clone());
+                        }
+
+                        if self.keys.verify(&user, &challenge, challenge_response) {
+                            // now we need to move everything around and upgrade to authed
+                            // ticket is still the old token
+                            file.upgrade(&self.auth_options);
+                            // now we need to move everything around and upgrade to authed
+                            let mut uploads = self.uploads.lock().await;
+                            let mut downloads = self.downloads.lock().await;
+                            let mut meta = self.files.lock().await;
+                            match uploads.remove(ticket) {
+                                Some(tik) => {
+                                    uploads.insert(file.get_token().clone(), tik);
+                                },
+                                None => ()
+                            };
+                            match downloads.remove(ticket) {
+                                Some(tik) => {
+                                    downloads.insert(file.get_token().clone(), tik);
+                                },
+                                None => ()
+                            };
+                            match meta.remove(ticket) {
+                                Some(tik) => {
+                                    meta.insert(file.get_token().clone(), tik);
+                                },
+                                None => ()
+                            };
+
+                            return Some(file.clone());
+                        } else {
+                            return None;
+                        }
+                    },
+                    None => None
+                }
+            },
+            None => None,
+        }
     }
 
     pub async fn get_file_metadata(&self, ticket: &String) -> Option<FileMetadata> {
@@ -85,25 +130,30 @@ impl AppState {
     }
 
     // this gets a bit weird since it uses the FileMetadata as its own thing so it could get messy when the start_upload is triggered but the upload doesnt exist in self here
-    pub async fn begin_upload(&self, ticket: &String, lock: &String) -> Option<Sender<Vec<u8>>> {
+    pub async fn begin_upload(&self, ticket: &String, key: &String) -> Result<(Sender<Vec<u8>>, &ServerOptions), (StatusCode, String)> {
         match self.files.lock().await.get_mut(ticket) { // need mut just in case the upload is valid, so we can instantly lock it
             Some(meta) => {
                 if meta.upload_locked() { // cannot allow another upload
-                    None
-                } else if !meta.check_key(lock) { // user didnt use the right key!
-                        return None;
+                    Err((StatusCode::CONFLICT,"File is already locked for upload".to_string()))
+                } else if !meta.check_key(key) {
+                    return Err((StatusCode::FORBIDDEN, "File has a different key".to_string()))
                 } else {
                     // okay, we've verified the upload so now we can lock it
                     match self.uploads.lock().await.get(ticket) {
                         Some(tx) => {
-                            meta.start_upload(lock);
-                            Some(tx.clone()) // yay!
+                            let opts = if meta.authenticated() {
+                                &self.auth_options
+                            } else {
+                                &self.reg_options
+                            };
+                            meta.start_upload(key);
+                            Ok((tx.clone(), opts)) // yay!
                         },
-                        None => None
+                        None => Err((StatusCode::GONE, "Upload does not exist, it is already in progress".to_string()))
                     }
                 }
             },
-            None => None
+            None => Err((StatusCode::NOT_FOUND, "Upload ticket does not exist".to_string()))
         }
     }
 
@@ -204,8 +254,11 @@ impl AppState {
         std::thread::sleep(std::time::Duration::from_secs(10));
         trace!("Trying cull...");
         let meta = self.files.lock().await;
-        let to_remove: Vec<String> = meta.keys()
-            .filter(|id| meta.get(*id).unwrap().age() > self.cull_time)
+        let to_remove: Vec<String> = meta.keys() // need to deal with auth and not authed!
+            .filter(|id| meta.get(*id).unwrap().age() > match meta.get(*id).unwrap().authenticated() {
+                true => self.auth_options.get_cull_time(),
+                false => self.reg_options.get_cull_time()
+            })
             .filter(|id| meta.get(*id).unwrap().is_in_waiting_state()) // things that aren't waiting shouldn't be culled
             .cloned()
             .collect();

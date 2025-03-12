@@ -1,9 +1,10 @@
+use ssh_key::{PrivateKey, SshSig};
 use tracing::{debug, error, warn};
 
 use crate::utils::metadata::FileMetadata;
 
-pub async fn get_upload_token(auth: String, file_len: usize, request_path: String) -> Option<FileMetadata> {
-    let params = [("authentication", auth), ("file-size", file_len.to_string())];
+pub async fn get_upload_token(username: &String, file_len: usize, request_path: String) -> Option<FileMetadata> {
+    let params = [("user", username.clone()), ("file-size", file_len.to_string())];
 
     let client = reqwest::Client::new();
     let res = client.post(request_path)
@@ -51,4 +52,28 @@ pub async fn get_upload_token(auth: String, file_len: usize, request_path: Strin
     debug!("File metadata received: {:?}", metadata);
 
     Some(metadata)
+}
+
+pub async fn authenticate(challenge: String, keys: Vec<PrivateKey>) -> Vec<SshSig> {
+    let mut output = vec![];
+    for key in keys {
+        match key.sign("bytebeam", ssh_key::HashAlg::Sha256, challenge.as_bytes()) {
+            Ok(signature) => {
+                debug!("Signed with key: {}", key.fingerprint(ssh_key::HashAlg::Sha256));
+                output.push(signature);
+            },
+            Err(e) => error!("Failed to sign with key: {:?}", e),
+        }
+    }
+    output
+}
+
+pub async fn get_privkey(data: &String) -> Option<PrivateKey> {
+    match ssh_key::PrivateKey::from_openssh(data) {
+        Ok(key) => Some(key),
+        Err(e) => {
+            error!("Failed to parse private key: {:?}", e);
+            None
+        }
+    }
 }

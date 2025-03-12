@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "server")]
-use rand::Rng;
-#[cfg(feature = "server")]
 use chrono::Duration;
+#[cfg(feature = "server")]
+use crate::server::serveropts::ServerOptions;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FileState {
@@ -22,21 +23,32 @@ pub struct FileMetadata {
     upload: FileState,
     download: FileState,
     created: DateTime<Utc>,
-    accessed: DateTime<Utc>
+    accessed: DateTime<Utc>,
+    authed_user: Option<String>,
+    challenge: String, // this will generate a uuidv4 no matter what, if no authed_user is passed, it is rather useless
+    authenticated: bool
 }
 
 impl FileMetadata {
     #[cfg(feature = "server")]
-    pub fn new() -> Self {
+    pub fn new(options: &ServerOptions, user: Option<&String>) -> Self {
+        use uuid::Uuid;
+
         FileMetadata {
             file_name: String::new(),
             file_size: 0,
-            path: FileMetadata::get_secure_string(),
-            upload_key: FileMetadata::get_secure_string(),
+            path: options.generate_upload_token(),
+            upload_key: options.generate_key_token(),
             upload: FileState::NotStarted,
             download: FileState::NotStarted,
             created: Utc::now(),
-            accessed: Utc::now()
+            accessed: Utc::now(),
+            authed_user: match user {
+                Some(u) => Some(u.clone()),
+                None => None,
+            },
+            challenge: format!("{}", Uuid::new_v4()),
+            authenticated: false
         }
     }
 
@@ -103,13 +115,16 @@ impl FileMetadata {
     pub fn redact(&self) -> Self {
         Self {
             file_name: "null".to_string(), // private to downloader
-            upload_key: "null".to_string(), // private
+            upload_key: "null".to_string(), // defeats the purpose of having this path
             file_size: 0, // rather unknown during the download
             upload: self.upload.clone(),
             download: self.download.clone(),
             path: self.path.clone(),
             created: self.created.clone(),
-            accessed: self.accessed.clone()
+            accessed: self.accessed.clone(),
+            authed_user: self.authed_user.clone(), // maybe should be private?
+            challenge: self.challenge.clone(),
+            authenticated: self.authenticated
         }
     }
 
@@ -129,18 +144,25 @@ impl FileMetadata {
     }
 
     #[cfg(feature = "server")]
-    fn get_secure_string() -> String {
-        let mut rng = rand::rng();
-        let words_raw = include_str!("../../wordlist.txt").trim(); // via https://gist.githubusercontent.com/dracos/dd0668f281e685bad51479e5acaadb93/raw/6bfa15d263d6d5b63840a8e5b64e04b382fdb079/valid-wordle-words.txt
-        // now split by newlines
-        let words = words_raw.split('\n').collect::<Vec<&str>>();
+    pub fn authenticated(&self) -> bool {
+        self.authenticated
+    }
 
-        let mut iter = vec![];
-
-        for _ in 0..3 {
-            iter.push(words[rng.random_range(0..words.len())].to_string());
+    #[cfg(feature = "server")]
+    pub fn get_challenge_details(&self) -> Option<(bool, &String, &String)> {
+        match &self.authed_user {
+            Some(user) => {
+                Some((self.authenticated(), user, &self.challenge))
+            },
+            None => None
         }
+    }
 
-        return format!("{}-{}", rng.random_range(0..100), iter.join("-"));
+    #[cfg(feature = "server")]
+    pub fn upgrade(&mut self, options: &ServerOptions) { // TODO: if the token formats are the same, don't change the key
+            self.authenticated = true;
+            self.path = options.generate_upload_token();
+            self.upload_key = options.generate_key_token();
+            self.accessed = Utc::now();
     }
 }

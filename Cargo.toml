@@ -1,6 +1,6 @@
 [package]
 name = "ByteBeam"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -28,9 +28,11 @@ axum = { version = "0.8.1", features = ["form", "json", "macros", "multipart"], 
 anyhow = {version = "1.0.95", optional = true }
 maud = { version = "0.27.0", features = ["axum"], optional = true }
 tower-http = { version = "0.6.2", features = ["set-header"], optional = true }
+uuid = { version = "1.15.1", features = ["v4"], optional = true }
+ssh-key = { version = "0.6.7", features = ["alloc"] }
 
 [features]
-server = ["anyhow", "axum", "maud", "rand", "tower-http"]
+server = ["anyhow", "axum", "maud", "rand", "tower-http", "uuid"]
 
 [[bin]]
 name = "beam"

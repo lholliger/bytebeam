@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand, Args};
 use client::{download::download_manager, upload::upload};
 use serde::Deserialize;
-
 use tracing::{error, trace, Level};
 use dotenv::dotenv;
 
@@ -12,7 +11,7 @@ mod client;
 #[cfg(feature = "server")]
 mod server;
 #[cfg(feature = "server")]
-use server::server::server;
+use server::server::{ServerConfig, server};
 
 #[derive(Parser, Deserialize, Debug)]
 #[command(name = "ByteBeam")]
@@ -28,11 +27,7 @@ struct Cli {
 
     /// Turn debugging information on
     #[arg(short, long, default_value="info", env="LOGLEVEL")]
-    loglevel: String,
-
-    /// authentication string
-    #[arg(short, long, value_name = "TOKEN", default_value = "password", env="AUTH")]
-    auth: String
+    loglevel: String
 }
 
 #[derive(Subcommand, Deserialize, Debug)]
@@ -70,10 +65,13 @@ struct UploadArgs {
     #[arg(short, long)]
     token: Option<String>,
 
-
     /// Optional filename to override for the upload
     #[arg(short, long)]
     name: Option<String>,
+
+    /// Username to authenticate against
+    #[arg(short, long, default_value = "default")]
+    username: String,
 
     /// the file to beam
     file: String,
@@ -89,33 +87,34 @@ struct DownloadArgs {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// The URL/token to download. If blank, create a reverse-upload
-    path: Option<String>,
+    /// Username to authenticate against
+    #[arg(short, long, default_value = "default")]
+    username: String,
+
+    /// Path for a key or keys to sign with
+    #[arg(short, long, default_value = "~/.ssh")]
+    key: String,
 
     /// Overwrite if needed
     #[arg(short, long)]
-    yes: bool
+    yes: bool,
+
+    /// The URL/token to download. If blank, create a reverse-upload
+    path: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 struct Config {
-    auth: Option<String>,
     client: Option<ClientConfig>,
 
     #[cfg(feature = "server")]
     server: Option<ServerConfig>
 }
 
-#[cfg(feature = "server")]
-#[derive(Deserialize, Debug, Clone)]
-struct ServerConfig {
-    listen: Option<String>,
-    cache: Option<usize>
-}
-
 #[derive(Deserialize, Debug, Clone)]
 struct ClientConfig {
     server: Option<String>,
+    username: Option<String>
 }
 
 #[tokio::main]
@@ -150,24 +149,13 @@ async fn main() {
         None
     };
 
-    match config.clone() {
-        Some(c) => match c.auth {
-            Some(a) => {
-                trace!("Auth set using config");
-                cli.auth = a
-            },
-            None => ()
-        }
-        None => ()
-    };
-
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
 
     match cli.command {
         #[cfg(feature = "server")]
         Commands::Server (mut args)  => {
-            if config.is_some() {
+            /*if config.is_some() {
                 let cs = config.unwrap();
                 if cs.server.is_some() {
                     let server_args = cs.server.unwrap();
@@ -180,8 +168,8 @@ async fn main() {
                         trace!("Using config server cache: {}", args.cache);
                     }
                 }
-            }
-            let _ = server(args.listen.clone(), args.cache, cli.auth.clone()).await;
+            }*/
+            let _ = server(config.expect("No config defined").server.expect("No server config defined")).await;
         },
 
         Commands::Up (mut args) => {
@@ -193,9 +181,13 @@ async fn main() {
                         args.server = c_args.server.unwrap();
                         trace!("Using config server: {}", args.server);
                     }
+                    if c_args.username.is_some() {
+                        args.username = c_args.username.unwrap();
+                        trace!("Using config username: {}", args.username);
+                    }
                 }
             }
-            let _ = upload(args.server.clone(), cli.auth.clone(), args.file.clone().into(), args.token.clone(), args.name).await;
+            let _ = upload(args.server.clone(), args.username.clone(), args.file.clone().into(), args.token.clone(), args.name).await;
         },
         Commands::Down (mut args) => {
             if config.is_some() { // TODO: dont duplicate code here
@@ -206,9 +198,13 @@ async fn main() {
                         args.server = c_args.server.unwrap();
                         trace!("Using config server: {}", args.server);
                     }
+                    if c_args.username.is_some() {
+                        args.username = c_args.username.unwrap();
+                        trace!("Using config username: {}", args.username);
+                    }
                 }
             }
-           let _ = download_manager(args.server.clone(), cli.auth.clone(), args.output.clone(), args.path.clone(), args.yes).await;
+           let _ = download_manager(args.server.clone(), args.username.clone(), args.output.clone(), args.path.clone(), args.yes).await;
         }
     }
 }

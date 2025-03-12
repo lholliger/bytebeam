@@ -12,7 +12,7 @@ use crate::utils::metadata::FileMetadata;
 
 use super::token::get_upload_token;
 
-pub async fn download_manager(server: String, auth: String, output: Option<PathBuf>, input: Option<String>, yes: bool) -> Result<(), ()> {
+pub async fn download_manager(server: String, username: String, output: Option<PathBuf>, input: Option<String>, yes: bool) -> Result<(), ()> {
     let download_path = match input {
         Some(piece) => {
             let url = match Url::parse(&piece) {
@@ -40,7 +40,7 @@ pub async fn download_manager(server: String, auth: String, output: Option<PathB
             let encoded_file = urlencoding::encode(&file_name);
             let download_path = format!("{server}/{encoded_file}");
 
-            match get_upload_token(auth, 0, download_path).await {
+            match get_upload_token(&username, 0, download_path).await {
                 Some(meta) => {
                     let download_path = format!("{server}/{}", meta.get_token());
                     match Url::parse(&download_path) {

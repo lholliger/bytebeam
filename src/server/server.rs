@@ -3,23 +3,49 @@ use anyhow::Result;
 use async_stream::stream;
 use axum::{body::Body, extract::{DefaultBodyLimit, Multipart, Path, Query, State}, http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode}, response::{IntoResponse, Redirect}, routing::{delete, get, post}, Form, Json, Router};
 use bytesize::ByteSize;
+use chrono::{Duration, TimeDelta};
 use maud::{html, Markup};
 use bytes::{BytesMut, BufMut};
+use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 use crate::{server::appstate::AppState, utils::metadata::FileMetadata};
 use tower_http::set_header::SetResponseHeaderLayer;
 
-pub async fn server(address: String, data_storage: usize, token: String) -> Result<()> {
-    const CHUNK_SIZE: usize = 4096;
-    let cache_size: usize = data_storage / CHUNK_SIZE;
+use super::serveropts::ServerOptions;
 
-    debug!("Cache size bytes: {}", cache_size);
+#[derive(Deserialize, Debug, Clone)]
+pub struct ServerConfig {
+    listen: Option<String>,
+    public_options: Option<ServerOptions>,
+    authenticated_options: Option<ServerOptions>,
+    keyserver: Option<String>,
+    users: Vec<String>
+}
 
-    if token == "password" {
-        warn!("WARNING - Using the default password is not recommended. Please use a secure token.")
-    }
 
-    let state = AppState::new(&token, cache_size);
+pub async fn server(config: ServerConfig) -> Result<()> {
+    //address: String, data_storage: usize, token: String
+
+    let address = config.listen.expect("No server listen address defined");
+
+    let public_config = match config.public_options {
+        Some(public_options) => public_options,
+        None => {
+            warn!("Public config is not defined... Using defaults!");
+            // limit of 4kbps to long UUID tokens
+            ServerOptions::new(4096, 4096, Duration::hours(1), "{uuid}".to_string(), "{uuid}".to_string(), Some(TimeDelta::seconds(1)))
+        },
+    };
+
+    let authed_config = match config.authenticated_options {
+        Some(authenticated_options) => authenticated_options,
+        None => {
+            warn!("Authenticated config is not defined... Using defaults!");
+            ServerOptions::new((1024 * 1024 * 1024) / 4096, 4096, Duration::hours(1), "{number}-{word}-{word}-{word}".to_string(), "{number}-{word}-{word}-{word}".to_string(), None)
+        },
+    };
+
+    let state = AppState::new(public_config, authed_config, config.keyserver, config.users).await;
 
 
     info!("Starting server listening on {}", address);
@@ -221,38 +247,54 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
 
 // this will return a lock/link to do the upload to
 #[axum::debug_handler]
-async fn make_upload(State(state): State<AppState>, Path(path): Path<String>, Form(params): Form<HashMap<String, String>>,) -> Result<Json<FileMetadata>, (StatusCode, Markup)> {
-    if let Some(auth) = params.get("authentication") {
-        debug!("Attempting to generate lock token for {path}");
+async fn make_upload(State(state): State<AppState>, Path(path): Path<String>, Form(params): Form<HashMap<String, String>>) -> Result<Json<FileMetadata>, (StatusCode, Markup)> {
+    // new: anyone can call for an upload token, however it will be limited unless authenticated
+    // rate limits may be good to add here, collisions are highly unlikely with uuids, however dealing with this takes compute!
 
-        match state.generate_file_upload(auth, &path).await {
-            Some(file_metadata) => {
-                debug!("Generated upload token for {path}");
-                // we may also want to allow options to be included in the upload
-                Ok(Json(file_metadata))
-            },
-            None => {
-                debug!("Failed to generate lock token for {path}. User likely did not use main token");
-                Err((StatusCode::UNAUTHORIZED, html! {"Unauthorized" }))
-            }
+    // this effectively has two paths, of "path" is a token, this is an upgrade 
+    match state.get_file_metadata(&path).await {
+        Some(_) => { // we have to do an upgrade
+            let challenge = match params.get("challenge") {
+                Some(challenge) => challenge,
+                None => return Err((StatusCode::BAD_REQUEST, html! {"Missing challenge parameter"})),
+            };
+
+            let resp = match state.upgrade(&path, &challenge).await {
+                Some(metadata) => metadata,
+                None => return Err((StatusCode::UNAUTHORIZED, html! {"Challenge failed"})),
+            };
+
+            Ok(Json(resp))
+        },
+        None => { // we are doing a new upload
+            let username = params.get("user");
+            debug!("{:?}", username);
+            match state.generate_file_upload(&path, username).await {
+                    Some(file_metadata) => {
+                        debug!("Generated upload token for {path}");
+                        // we may also want to allow options to be included in the upload
+                        Ok(Json(file_metadata))
+                    },
+                    None => {
+                        debug!("Failed to generate lock token for {path}. User likely did not use main token");
+                        Err((StatusCode::UNAUTHORIZED, html! {"Unauthorized" }))
+                    }
+                }
         }
-    } else {
-        return Err((StatusCode::UNAUTHORIZED, html! {"Unauthorized. Authentication not provided" }));
     }
 }
 
-// TODO: give useful output when something fails?
-#[axum::debug_handler]
 async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String, String)>, mut multipart: Multipart) -> impl IntoResponse { // "path" is actually the key
-    let upload = match state.begin_upload(&token, &key).await { // wont keep the metadata locked for too long, hopefully!
-        Some(sender) => {
-            sender
-        }
-        None => {
-            error!("Upload does not exist, it is already in progress, or the password was incorrect, cannot proceed with upload");
-            return "Upload does not exist, it is already in progress, or the password was incorrect, cannot proceed with upload".into_response();
+    
+    let (upload, upload_options) = match state.begin_upload(&token, &key).await {
+        Ok(res) => res,
+        Err(e) => {
+            return e.into_response();
         }
     };
+
+    let block_size = upload_options.get_block_size();
+    let delay_time = upload_options.get_delay_time();
 
     // now we just need to allow the upload!
     while let Ok(field_raw) = multipart.next_field().await {
@@ -285,8 +327,8 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
             size += chunk.len();
             buffer.put(chunk);
 
-            while buffer.len() >= state.block_size {
-                let chunk_data = buffer.split_to(state.block_size).to_vec();
+            while buffer.len() >= block_size {
+                let chunk_data = buffer.split_to(block_size).to_vec();
                 match upload.send(chunk_data).await {
                     Ok(_) => (),
                     Err(e) => {
@@ -297,6 +339,11 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
                 if upload.is_closed() {
                     error!("Upload failed");
                     return "Upload failed".into_response();
+                }
+                // we dont need to delay or try to if it doesnt exist
+                if let Some(delay) = delay_time {
+                    let std_duration = std::time::Duration::from_millis(delay.num_milliseconds() as u64); // micro/nano may be a better idea
+                    tokio::time::sleep(std_duration).await;
                 }
             }
         }
