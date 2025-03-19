@@ -85,9 +85,17 @@ impl AppState {
                                 // now we need to move everything around and upgrade to authed
                                 let mut uploads = self.uploads.lock().await;
                                 let mut downloads = self.downloads.lock().await;
+
+                                let (tx, rx) = channel(self.auth_options.get_cache_size());
                                 match uploads.remove(ticket) {
                                     Some(tik) => {
-                                        uploads.insert(file.get_token().clone(), tik);
+                                        // if it has been used, we cannot re-create it!
+                                        if tik.capacity() != self.reg_options.get_cache_size() {
+                                            uploads.insert(file.get_token().clone(), tik);
+                                        } else {
+                                            uploads.insert(file.get_token().clone(), tx);
+                                            downloads.insert(ticket.to_string(), rx); // this will just cause a nice simple move and override the old one
+                                        }
                                     },
                                     None => ()
                                 };

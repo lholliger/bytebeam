@@ -6,7 +6,7 @@ use bytesize::ByteSize;
 use chrono::{Duration, TimeDelta};
 use maud::{html, Markup};
 use bytes::{BytesMut, BufMut};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use crate::{server::appstate::AppState, utils::metadata::FileMetadata};
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -295,6 +295,8 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
 
     let block_size = upload_options.get_block_size();
     let delay_time = upload_options.get_delay_time();
+
+    trace!("Starting upload for {} with a delay size of {:?}", token, delay_time);
 
     // now we just need to allow the upload!
     while let Ok(field_raw) = multipart.next_field().await {
