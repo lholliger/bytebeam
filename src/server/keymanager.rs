@@ -27,9 +27,12 @@ impl KeyManager {
                 Err(_) => {
                     // ssh_key::authorized_keys
                     // if we can't parse the key, it's probably a username and we need to ask the keyserver for their keys
+                    debug!("Getting {}'s keys from keyserver", user);
                     let response = km.get_keys_from_keyserver(&user).await;
                     if let Some(key_response) = response {
                         km.users.insert(user.clone(), key_response);
+                    } else {
+                        error!("Failed to get keyserver keys!");
                     }
                 },
             }

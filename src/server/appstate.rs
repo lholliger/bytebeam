@@ -64,49 +64,52 @@ impl AppState {
     }
 
     // this will upgrade the user's file upload if their authentication challenge succeeds
-    pub async fn upgrade(&self, ticket: &String, challenge_response: &String) -> Option<FileMetadata> {
+    pub async fn upgrade(&self, ticket: &String, challenge_responses: &Vec<String>) -> Option<FileMetadata> {
         let mut meta = self.files.lock().await;
-        let file = meta.get_mut(ticket);
+        let file = meta.get(ticket);
         match file {
             Some(file) => {
                 match file.get_challenge_details() {
                     Some((authenticated, user, challenge)) => {
-                        if authenticated {
-                            // its already upgraded
-                            return Some(file.clone());
-                        }
+                        for challenge_response in challenge_responses {
+                            if authenticated {
+                                // its already upgraded
+                                return Some(file.clone());
+                            }
 
-                        if self.keys.verify(&user, &challenge, challenge_response) {
-                            // now we need to move everything around and upgrade to authed
-                            // ticket is still the old token
-                            file.upgrade(&self.auth_options);
-                            // now we need to move everything around and upgrade to authed
-                            let mut uploads = self.uploads.lock().await;
-                            let mut downloads = self.downloads.lock().await;
-                            let mut meta = self.files.lock().await;
-                            match uploads.remove(ticket) {
-                                Some(tik) => {
-                                    uploads.insert(file.get_token().clone(), tik);
-                                },
-                                None => ()
-                            };
-                            match downloads.remove(ticket) {
-                                Some(tik) => {
-                                    downloads.insert(file.get_token().clone(), tik);
-                                },
-                                None => ()
-                            };
-                            match meta.remove(ticket) {
-                                Some(tik) => {
-                                    meta.insert(file.get_token().clone(), tik);
-                                },
-                                None => ()
-                            };
+                            if self.keys.verify(&user, &challenge, challenge_response) {
+                                // now we need to move everything around and upgrade to authed
+                                // ticket is still the old token
+                                let mut file = file.clone();
+                                file.upgrade(&self.auth_options);
+                                // now we need to move everything around and upgrade to authed
+                                let mut uploads = self.uploads.lock().await;
+                                let mut downloads = self.downloads.lock().await;
+                                match uploads.remove(ticket) {
+                                    Some(tik) => {
+                                        uploads.insert(file.get_token().clone(), tik);
+                                    },
+                                    None => ()
+                                };
+                                match downloads.remove(ticket) {
+                                    Some(tik) => {
+                                        downloads.insert(file.get_token().clone(), tik);
+                                    },
+                                    None => ()
+                                };
+                                match meta.remove(ticket) {
+                                    Some(_) => {
+                                        meta.insert(file.get_token().clone(), file.clone());
+                                    },
+                                    None => ()
+                                };
 
-                            return Some(file.clone());
-                        } else {
-                            return None;
+                                return Some(file);
+                            } else {
+                                return None;
+                            }
                         }
+                        return None;
                     },
                     None => None
                 }

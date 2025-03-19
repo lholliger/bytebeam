@@ -24,7 +24,7 @@ pub async fn server(config: ServerConfig) -> Result<()> {
         None => {
             warn!("Public config is not defined... Using defaults!");
             // limit of 4kbps to long UUID tokens
-            ServerOptions::new(4096, 4096, Duration::hours(1), "{uuid}".to_string(), "{uuid}".to_string(), Some(TimeDelta::seconds(1)))
+            ServerOptions::new(1, 4096, Duration::hours(1), "{uuid}".to_string(), "{uuid}".to_string(), Some(TimeDelta::seconds(1)))
         },
     };
 
@@ -250,8 +250,17 @@ async fn make_upload(State(state): State<AppState>, Path(path): Path<String>, Fo
                 None => return Err((StatusCode::BAD_REQUEST, html! {"Missing challenge parameter"})),
             };
 
-            let resp = match state.upgrade(&path, &challenge).await {
-                Some(metadata) => metadata,
+            // allows JSON but also will allow single entry
+            let tests: Vec<String> = match serde_json::from_str(&challenge) {
+                Ok(tests) => tests,
+                Err(_) => vec![challenge.to_string()],
+            };
+
+            let resp = match state.upgrade(&path, &tests).await {
+                Some(metadata) => {
+                    debug!("Challenge passed. New metadata: {:?}", metadata);
+                    metadata
+                },
                 None => return Err((StatusCode::UNAUTHORIZED, html! {"Challenge failed"})),
             };
 

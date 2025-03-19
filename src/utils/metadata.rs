@@ -143,12 +143,10 @@ impl FileMetadata {
         self.download == FileState::NotStarted || self.upload == FileState::NotStarted
     }
 
-    #[cfg(feature = "server")]
     pub fn authenticated(&self) -> bool {
         self.authenticated
     }
 
-    #[cfg(feature = "server")]
     pub fn get_challenge_details(&self) -> Option<(bool, &String, &String)> {
         match &self.authed_user {
             Some(user) => {

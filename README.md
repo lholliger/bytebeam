@@ -4,6 +4,8 @@ An extremely simple way to stream a file from one machine to another using a sel
 
 **This is in no way ready for deployment!**
 
+Note: This readme is not updated for 0.3.0 yet.
+
 ## Background
 
 I often using Magic Wormhole but it keeps selecting the proxies in order to send data, which causes major speed losses and general frusteration, so I decided to make a solution that works well for me.

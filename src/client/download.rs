@@ -12,7 +12,7 @@ use crate::utils::metadata::FileMetadata;
 
 use super::{token::get_upload_token, DownloadArgs};
 pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
-    let (server, username, key) = config.args.get_absolute();    
+    let (server, username, _) = config.args.get_absolute();    
     let download_path = match config.path {
         Some(piece) => {
             let url = match Url::parse(&piece) {

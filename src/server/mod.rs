@@ -47,9 +47,12 @@ impl ServerConfig {
 
         self.keyserver = match args.keyserver {
             Some(k) => Some(k),
-            None => {
-                warn!("Key server not provided. Authentication will not be possible without defined keys or a keyserver!");
-                None
+            None => match &self.keyserver {
+                Some(k) => Some(k.clone()), // do nothing???
+                None => {
+                    warn!("Key server not provided. Authentication will not be possible without defined keys or a keyserver!");
+                    None
+                }
             }
         };
     }

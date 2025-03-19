@@ -2,7 +2,7 @@ use std::path::Path;
 use clap::{Parser, Subcommand};
 use client::{download::download_manager, upload::upload, ClientConfig, DownloadArgs, UploadArgs};
 use serde::Deserialize;
-use tracing::{error, Level};
+use tracing::{error, trace, Level};
 use dotenv::dotenv;
 
 mod utils; // this is needed in both server and client
@@ -110,6 +110,7 @@ async fn main() {
                     args.args.merge(cconfig);
                 }
             }
+            trace!("Running upload with args {:?}", args);
             let _ = upload(args).await;
         },
         Commands::Down (mut args) => {
