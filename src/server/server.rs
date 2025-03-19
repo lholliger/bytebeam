@@ -15,8 +15,6 @@ use super::{serveropts::ServerOptions, ServerConfig};
 
 
 pub async fn server(config: ServerConfig) -> Result<()> {
-    //address: String, data_storage: usize, token: String
-
     let address = config.listen.expect("No server listen address defined");
 
     let public_config = match config.public_options {
@@ -119,13 +117,20 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
     };
 
     let s = stream! {
+        let mut bytes_sent = 0;
         loop {
             let data = download.recv().await;
             match data {
                 Some(data) => {
+                    bytes_sent += data.len();
                     if data.is_empty() {
-                        // the download is complete! TODO: set state
+                        debug!("No bytes remaining to read");
+                        state.end(&token).await;
                         break;
+                    }
+                    if meta.file_size > 0 && bytes_sent >= meta.file_size {
+                        debug!("File downloaded completely. Marking as done");
+                        state.end(&token).await;
                     }
                     yield Ok(data);
                 },

@@ -177,7 +177,12 @@ pub async fn upload(config: UploadArgs) -> Result<(), ()> {
                                 break;
                             }
                         }
-                        std::thread::sleep(std::time::Duration::from_secs(10));
+                        if is_downloading {
+                            std::thread::sleep(std::time::Duration::from_secs(5));
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_secs(10));
+
+                        }
                     }
                 });
             }));

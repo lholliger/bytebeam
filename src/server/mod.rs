@@ -39,9 +39,12 @@ impl ServerConfig {
     pub fn apply_args(&mut self, args: ServerArgs) {
        self.listen = Some(match args.listen {
             Some(l) => l,
-            None => {
-                warn!("Server not provided. Using default!");
-                "0.0.0.0:3000".to_string()
+            None => match &self.listen {
+                None => {
+                    warn!("Server not provided. Using default!");
+                    "0.0.0.0:3000".to_string()
+                },
+                Some(k) => k.clone()
             }
         });
 
