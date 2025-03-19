@@ -18,6 +18,8 @@ RUN cargo build --release --features server
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
-RUN apt-get update && apt-get install -y libssl-dev && apt clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libssl-dev ca-certificates && apt clean && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/beam /usr/local/bin
-ENTRYPOINT /usr/local/bin/beam server
+ENV LOGLEVEL debug
+ENV CONFIG /bytebeam.toml
+ENTRYPOINT ["/usr/local/bin/beam", "server"]

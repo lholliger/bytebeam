@@ -24,7 +24,7 @@ struct Cli {
     command: Commands,
 
     /// Sets a custom config file
-    #[arg(short, long, value_name = "FILE", default_value = "~/.config/bytebeam.toml")]
+    #[arg(short, long, value_name = "FILE", default_value = "~/.config/bytebeam.toml", env = "CONFIG")]
     config: String,
 
     /// Turn debugging information on
