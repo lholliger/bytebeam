@@ -3,7 +3,7 @@ use reqwest::StatusCode;
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex};
 use tracing::{debug, trace};
 
-use crate::utils::metadata::FileMetadata;
+use crate::utils::{compression::Compression, metadata::FileMetadata};
 
 use super::{keymanager::KeyManager, serveropts::ServerOptions};
 
@@ -203,7 +203,7 @@ impl AppState {
         }
     }
 
-    pub async fn set_metadata(&self, ticket: &String, name: Option<String>, size: Option<usize>) -> bool {
+    pub async fn set_metadata(&self, ticket: &String, name: Option<String>, size: Option<usize>, compression: Option<Compression>) -> bool {
         match self.files.lock().await.get_mut(ticket) { // need mut just in case the upload is valid, so we can instantly lock it
             Some(meta) => {
                 if name.is_some() {
@@ -211,6 +211,9 @@ impl AppState {
                 }
                 if size.is_some() {
                     meta.file_size = size.unwrap();
+                }
+                if compression.is_some() {
+                    meta.compression = compression.unwrap();
                 }
                 true
             },

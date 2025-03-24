@@ -1,10 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use super::compression::Compression;
 #[cfg(feature = "server")]
 use chrono::Duration;
 #[cfg(feature = "server")]
 use crate::server::serveropts::ServerOptions;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FileState {
@@ -18,6 +18,7 @@ pub enum FileState {
 pub struct FileMetadata {
     pub file_name: String, // making getters/setters when nothing depends on this feels kinda useless
     pub file_size: usize,
+    pub compression: Compression,
     path: String,
     upload_key: String,
     upload: FileState,
@@ -26,7 +27,7 @@ pub struct FileMetadata {
     accessed: DateTime<Utc>,
     authed_user: Option<String>,
     challenge: String, // this will generate a uuidv4 no matter what, if no authed_user is passed, it is rather useless
-    authenticated: bool
+    authenticated: bool,
 }
 
 impl FileMetadata {
@@ -48,7 +49,8 @@ impl FileMetadata {
                 None => None,
             },
             challenge: format!("{}", Uuid::new_v4()),
-            authenticated: false
+            authenticated: false,
+            compression: Compression::default()
         }
     }
 
@@ -124,7 +126,8 @@ impl FileMetadata {
             accessed: self.accessed.clone(),
             authed_user: self.authed_user.clone(), // maybe should be private?
             challenge: self.challenge.clone(),
-            authenticated: self.authenticated
+            authenticated: self.authenticated,
+            compression: self.compression.clone(),
         }
     }
 

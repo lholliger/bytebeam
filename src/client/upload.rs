@@ -1,5 +1,4 @@
 use std::{path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
-use async_stream::stream;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -7,15 +6,14 @@ use reqwest::Body;
 use tokio::io;
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, warn};
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::Stream;
 use url::Url;
 
-use crate::{client::token::{get_key_or_keys_from_path, get_upgrade, get_upload_token, sign_challenge}, utils::metadata::FileMetadata};
+use crate::{client::token::{get_key_or_keys_from_path, get_upgrade, get_upload_token, sign_challenge}, utils::{compression::Compression, metadata::FileMetadata}};
 
-use super::UploadArgs;
+use super::{compression::ProgressStream, UploadArgs};
 
 pub async fn upload(config: UploadArgs) -> Result<(), ()> {
-//pub async fn upload(server: String, username: String, filepath: PathBuf, token: Option<String>, name_override: Option<String>) -> Result<(), ()> {
     let filepath = config.get_file_path();
     let (server, username, key) = config.args.get_absolute();
 
@@ -24,7 +22,7 @@ pub async fn upload(config: UploadArgs) -> Result<(), ()> {
     let mut file_name = "bytebeam".to_string();
     let mut file_len = 0;
 
-    let mut reader_stream = if !filepath.exists() {
+    let reader_stream = if !filepath.exists() {
         let filepath_str = filepath.to_str().expect("Could not convert path to string");
         if filepath_str == "-" {
             if config.name.is_none() {
@@ -37,12 +35,20 @@ pub async fn upload(config: UploadArgs) -> Result<(), ()> {
             return Err(());
         }
     } else {
-        let file = tokio::fs::File::open(&filepath).await.unwrap();
-        file_len = file.metadata().await.expect("Could not read metadata").len();
-        debug!("Found file length: {}", ByteSize(file_len).to_string_as(true));
-        file_name = std::path::Path::new(&filepath).file_name().unwrap_or_default().to_string_lossy().to_string();
-        
-        Box::new(ReaderStream::new(file)) as Box<dyn Stream<Item = Result<Bytes, io::Error>> + Unpin + Send>
+        // see if file is a folder, so we need to send the whole thing
+        if filepath.is_dir() {
+            //let mut file_list = tokio::fs::read_dir(&filepath).await.unwrap();
+
+            error!("Folder support is not ready yet");
+            return Err(());
+        } else {
+            let file = tokio::fs::File::open(&filepath).await.unwrap();
+            file_len = file.metadata().await.expect("Could not read metadata").len();
+            debug!("Found file length: {}", ByteSize(file_len).to_string_as(true));
+            file_name = std::path::Path::new(&filepath).file_name().unwrap_or_default().to_string_lossy().to_string();
+            
+            Box::new(ReaderStream::new(file)) as Box<dyn Stream<Item = Result<Bytes, io::Error>> + Unpin + Send>
+        }
     };
 
 
@@ -199,21 +205,24 @@ pub async fn upload(config: UploadArgs) -> Result<(), ()> {
     bar.enable_steady_tick(Duration::from_millis(100));
     let read_so_far: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
 
-    let int_read = read_so_far.clone();
-    let async_stream = stream! {
-        while let Some(chunk) = reader_stream.next().await {
-            if let Ok(chunk) = &chunk {
-                let mut b = int_read.lock().unwrap();
-                *b += chunk.len() as u64;
-                bar.set_position(*b);
-            }
-            yield chunk;
-        }
-    };
+    let progress_stream = ProgressStream::new(
+        reader_stream,
+        read_so_far.clone(),
+        bar.clone(),
+        config.compression.clone()
+    );
+
+    let async_stream = progress_stream.into_stream();
+    
     
     let client = reqwest::Client::new();
     let form = reqwest::multipart::Form::new()
-        .text("file-size", file_len.to_string())
+
+        .text("file-size", match config.compression { // output size changes
+            Compression::None => file_len.to_string(),
+            _ => "0".to_string()
+        })
+        .text("compression", config.compression.to_string())
         .part("file", reqwest::multipart::Part::stream(Body::wrap_stream(async_stream)));
 
     match client.post(upload_path)

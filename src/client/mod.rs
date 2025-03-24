@@ -1,10 +1,13 @@
 use std::path::PathBuf;
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::Deserialize;
+
+use crate::utils::compression::Compression;
 
 pub mod upload;
 pub mod download;
 mod token;
+mod compression;
 
 #[derive(Args, Deserialize, Debug)]
 pub struct UploadArgs {
@@ -19,8 +22,23 @@ pub struct UploadArgs {
     #[arg(short, long)]
     name: Option<String>,
 
+    /// Compression to use when sending, defaults to none
+    #[arg(short, long, default_value = "none")]
+    compression: Compression,
+
+    // this is not done at all yet
+    /// Format for when sending a folder, defaults to zip
+    //#[arg(short, long, default_value = "zip")]
+    //archve: Archive,
+
     /// the file to beam
     file: String,
+}
+
+#[derive(Deserialize, Debug, Clone, ValueEnum)]
+enum Archive {
+    Zip,
+    Tar
 }
 
 impl UploadArgs {

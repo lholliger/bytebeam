@@ -100,8 +100,14 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
 
     // okay, now we can just download
 
+    let req = reqwest::ClientBuilder::new()
+        .user_agent(format!("ByteBeam/{}", env!("CARGO_PKG_VERSION")))
+        .build().expect("Could not build download request")
+        .get(download_path)
+        .send();
 
-    let request = match reqwest::get(download_path).await {
+
+    let request = match req.await {
         Ok(req) => req,
         Err(e) => {
             error!("Failed to connect to server: {}", e);

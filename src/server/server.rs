@@ -7,8 +7,9 @@ use chrono::{Duration, TimeDelta};
 use maud::{html, Markup};
 use bytes::{BytesMut, BufMut};
 use tracing::{debug, error, info, trace, warn};
-use crate::{server::appstate::AppState, utils::metadata::FileMetadata};
+use crate::{server::appstate::AppState, utils::{compression::Compression, metadata::FileMetadata}};
 use tower_http::set_header::SetResponseHeaderLayer;
+use std::str::FromStr;
 
 use super::{serveropts::ServerOptions, ServerConfig};
 
@@ -146,10 +147,18 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
     };
 
     let body = Body::from_stream(s);
+
     
     if meta.file_size != 0 {
+        debug!("Writing content length as {}", meta.file_size);
         Ok(Response::builder()
         .header("content-length", meta.file_size)
+        .body(body)
+        .unwrap())
+    } else if meta.compression != Compression::None { // size isnt given when compressing
+        debug!("Writing compression as {:?}", meta.compression);
+        Ok(Response::builder()
+        .header("content-encoding", meta.compression.to_string())
         .body(body)
         .unwrap())
     } else {
@@ -175,7 +184,7 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
         },
         None => false
     };
-
+    
     if return_metadata {
         return Ok(Json(meta.redact()).into_response());
     }
@@ -224,6 +233,7 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
                     ul {
                         li {"File name: " (&meta.file_name)}
                         li {"File size: " (&file_size_string)}
+                        li {"Compression: " (&meta.compression.to_string())}
                     }
                     a href = "?download=true" download {"Click here to start the download"}
                     br;
@@ -319,8 +329,18 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
             debug!("User is attempting set size");
             let content = field.text().await.unwrap();
             // DONT unwrap the parse here!
-            state.set_metadata(&token, None, Some(content.parse::<usize>().unwrap())).await;
+            state.set_metadata(&token, None, Some(content.parse::<usize>().unwrap()), None).await;
             debug!("User set file size {}", content);
+            continue;
+        }
+
+        if name == "compression" {
+            debug!("User is attempting set compression");
+            let content = field.text().await.unwrap();
+            // DONT unwrap the parse here!
+            // does it matter?
+            state.set_metadata(&token, None, None, Some(Compression::from_str(content.as_str()).unwrap())).await;
+            debug!("User set compression {}", content);
             continue;
         }
 
