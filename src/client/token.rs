@@ -1,7 +1,7 @@
-use std::{fs, path::Path};
+use std::{fs, path::{Path, PathBuf}};
 
 use ssh_key::{PrivateKey, SshSig};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::utils::metadata::FileMetadata;
 
@@ -176,4 +176,56 @@ pub fn get_key_or_keys_from_path(path: &Path) -> Vec<PrivateKey> {
     }
 
     output
+}
+
+pub async fn do_run_upgrade_on_metadata(metadata: FileMetadata, username: &String, key: &String, server: &String) -> FileMetadata {
+    if *username != "default".to_string() { // this is worth authentication now
+        // we need to expand the key
+        let expanded = shellexpand::tilde(&key).into_owned();
+        let config_path = PathBuf::new().join(&expanded);
+        let keys = get_key_or_keys_from_path(&config_path);
+        let challenges = match metadata.get_challenge_details() {
+            Some(challenge) => {
+                if *username != challenge.1.clone() {
+                    warn!("Username mismatch for challenge. Expected {}, got {}.", username, challenge.1)
+                }
+                sign_challenge(challenge.2, &keys)
+            },
+            None => {
+                error!("Failed to get challenge details from server. Is the server up to date?");
+                return metadata
+            }
+        };
+        // now we can try to update things
+        if challenges.len() == 0 {
+            warn!("Could not sign the challenge, running with no authentication!");
+            return metadata
+        } else {
+            let mut testing_val = vec![];
+            for chal in challenges {
+                match chal.to_pem(ssh_key::LineEnding::default()) {
+                    Ok(pem) => testing_val.push(pem),
+                    Err(e) => error!("Failed to parse PEM: {}", e),
+                }
+            }
+
+
+            match get_upgrade(&format!("{server}/{}", metadata.get_upload_info().0), &testing_val).await {
+                Some(meta) => {
+                    if !meta.authenticated() {
+                        warn!("Server returned metadata but it was not authenticated! Proceeding with new data!");
+                    } else {
+                        debug!("Authenticated! Switching metadata");
+                    }
+                    return meta
+                },
+                None => {
+                    warn!("Could not properly authenticate, proceeding normally!");
+                    return metadata
+                }
+            }
+        }
+    }
+    trace!("Using default user. No authentication will happen");
+    return metadata
 }

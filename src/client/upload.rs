@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
+use std::{sync::{Arc, Mutex}, thread, time::Duration};
 use bytes::Bytes;
 use bytesize::ByteSize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -9,7 +9,7 @@ use tracing::{debug, error, warn};
 use tokio_stream::Stream;
 use url::Url;
 
-use crate::{client::token::{get_key_or_keys_from_path, get_upgrade, get_upload_token, sign_challenge}, utils::{compression::Compression, metadata::FileMetadata}};
+use crate::{client::token::{do_run_upgrade_on_metadata, get_upload_token}, utils::{compression::Compression, metadata::FileMetadata}};
 
 use super::{compression::ProgressStream, UploadArgs};
 
@@ -80,60 +80,13 @@ pub async fn upload(config: UploadArgs) -> Result<(), ()> {
         
             // so we need to get the download
         
-            let mut metadata = match get_upload_token(&username, file_len as usize, upload_path).await {
-                Some(metadata) => metadata,
+            let metadata = match get_upload_token(&username, file_len as usize, upload_path).await {
+                Some(metadata) => do_run_upgrade_on_metadata(metadata, &username, &key, &server).await,
                 None => {
                     error!("Failed to get upload token");
                     return Err(());
                 }
             };
-
-            if username != "default".to_string() { // this is worth authentication now
-                // we need to expand the key
-                let expanded = shellexpand::tilde(&key).into_owned();
-                let config_path = PathBuf::new().join(&expanded);
-                let keys = get_key_or_keys_from_path(&config_path);
-                let challenges = match metadata.get_challenge_details() {
-                    Some(challenge) => {
-                        if username != challenge.1.clone() {
-                            warn!("Username mismatch for challenge. Expected {}, got {}.", username, challenge.1)
-                        }
-                        sign_challenge(challenge.2, &keys)
-                    },
-                    None => {
-                        error!("Failed to get challenge details from server. Is the server up to date?");
-                        return Err(());
-                    }
-                };
-                // now we can try to update things
-                if challenges.len() == 0 {
-                    warn!("Could not sign the challenge, running with no authentication!");
-                } else {
-                    let mut testing_val = vec![];
-                    for chal in challenges {
-                        match chal.to_pem(ssh_key::LineEnding::default()) {
-                            Ok(pem) => testing_val.push(pem),
-                            Err(e) => error!("Failed to parse PEM: {}", e),
-                        }
-                    }
-
-
-                    match get_upgrade(&format!("{server}/{}", metadata.get_upload_info().0), &testing_val).await {
-                        Some(meta) => {
-                            if !meta.authenticated() {
-                                warn!("Server returned metadata but it was not authenticated! Proceeding with new data!");
-                            } else {
-                                debug!("Authenticated! Switching metadata");
-                            }
-                            metadata = meta;
-                        },
-                        None => {
-                            warn!("Could not properly authenticate, proceeding normally!");
-                        }
-
-                    }                    
-                }
-            }
         
             let ul = metadata.get_upload_info();
             let upload_path = match Url::parse(format!("{server}/{}/{}", ul.0, ul.1).as_str()) {

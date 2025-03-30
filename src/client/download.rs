@@ -2,19 +2,23 @@ use std::{io, io::Write, time::Duration};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio::fs::File;
-use tracing::error;
+use tracing::{error, trace, warn};
 use url::Url;
 use urlencoding::decode;
 use tokio_stream::StreamExt;
 use tokio::io::AsyncWriteExt;
 
-use crate::utils::metadata::FileMetadata;
+use crate::{client::token::do_run_upgrade_on_metadata, utils::metadata::FileMetadata};
 
 use super::{token::get_upload_token, DownloadArgs};
 pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
-    let (server, username, _) = config.args.get_absolute();    
+    let (server, username, key) = config.args.get_absolute();
     let download_path = match config.path {
         Some(piece) => {
+            // if piece has more than two total slashes, it is likely a path and not a url
+            if piece.chars().filter(|c| *c == '/').count() > 2 && !piece.starts_with("http") {
+                warn!("{} is likely not a beam path and is instead a local path. If you are looking to do a reverse download, do -o [path] instead", piece);
+            }
             let url = match Url::parse(&piece) {
                 Ok(url) => url,
                 Err(_) => match Url::parse(format!("{server}/{piece}").as_str()) {
@@ -31,7 +35,7 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
         },
         None => {
             if config.output.is_none() {
-                error!("No input or output provided. Please provide a Beam code and/or a path to download to.");
+                error!("No input or output provided. Please provide a Beam code to download, or create a reverse download using -o [output]");
                 return Err(());
             }
             // this is weird since a filename needs to be provided, as its defined here
@@ -42,6 +46,8 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
 
             match get_upload_token(&username, 0, download_path).await {
                 Some(meta) => {
+                    // lets try to sign it first
+                    let meta = do_run_upgrade_on_metadata(meta, &username, &key, &server).await;
                     let download_path = format!("{server}/{}", meta.get_token());
                     match Url::parse(&download_path) {
                         Ok(url) => {
@@ -66,9 +72,13 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
                 }
             }
 
+
+
             // we can give the user the path to download to, as well as some curl commands
         }
     };
+
+    trace!("Downloading from URL {}", download_path);
 
     // we should wait until we can verify the metadata
     println!("Waiting for download...");
@@ -80,7 +90,7 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
                 return Err(());
             }
         };
-
+        trace!("{:?}", status);
         match status.json::<FileMetadata>().await {
             Ok(meta) => {
                 if !meta.download_locked() && meta.upload_locked() {
@@ -89,7 +99,7 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
                 }
             }
             Err(e) => {
-                error!("Failed to parse download metadata: {}", e);
+                error!("Failed to parse download metadata: {:?}", e);
                 return Err(());
             }
         }
