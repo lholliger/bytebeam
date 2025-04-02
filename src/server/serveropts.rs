@@ -10,18 +10,23 @@ pub struct ServerOptions {
     cull_time: TimeDelta, // time after which an upload is removed from cache when considered stale
     token_format: String, // This is for the path of downloads. Normally {number}-{word}-{word}-{word}. options are {number}, {word}, {uuid}
     upload_format: String, // same as above.
+    size_update_time: TimeDelta,
     packet_delay: Option<TimeDelta> // time to limit between each packet
 }
 
 impl ServerOptions {
-    pub fn new(cache_size: usize, block_size: usize, cull_time: TimeDelta, token_format: String, upload_format: String, packet_delay: Option<TimeDelta>) -> Self {
+    pub fn new(cache_size: usize, block_size: usize, cull_time: TimeDelta, token_format: String, upload_format: String, packet_delay: Option<TimeDelta>, size_update_time: Option<TimeDelta>) -> Self {
         ServerOptions {
             cache_size,
             block_size,
             cull_time,
             token_format,
             upload_format,
-            packet_delay
+            packet_delay,
+            size_update_time: match size_update_time {
+                Some(t) => t,
+                None => TimeDelta::new(1, 0).unwrap(),
+            },
         }
     }
 

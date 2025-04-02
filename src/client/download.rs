@@ -90,7 +90,6 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
                 return Err(());
             }
         };
-        trace!("{:?}", status);
         match status.json::<FileMetadata>().await {
             Ok(meta) => {
                 if !meta.download_locked() && meta.upload_locked() {
@@ -130,6 +129,8 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
         error!("Response: {}", request.text().await.expect("Could not get response"));
         return Err(());
     }
+
+    trace!("File headers: {:?}", request.headers());
 
     // can we get the file name?
 
@@ -202,7 +203,7 @@ pub async fn download_manager(config: DownloadArgs) -> Result<(), ()> {
                 }
             }
             Err(e) => {
-                error!("Failed to decode chunk: {}", e);
+                error!("Failed to decode chunk: {:?}", e);
                 return Err(());
             }
         }

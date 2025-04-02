@@ -2,6 +2,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use super::compression::Compression;
 #[cfg(feature = "server")]
+use tracing::warn;
+#[cfg(feature = "server")]
+use bytesize::ByteSize;
+#[cfg(feature = "server")]
 use chrono::Duration;
 #[cfg(feature = "server")]
 use crate::server::serveropts::ServerOptions;
@@ -17,8 +21,8 @@ pub enum FileState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMetadata {
     pub file_name: String, // making getters/setters when nothing depends on this feels kinda useless
-    pub file_size: usize,
-    pub compression: Compression,
+    pub file_size: FileSize,
+    compression: Compression,
     path: String,
     upload_key: String,
     upload: FileState,
@@ -37,7 +41,7 @@ impl FileMetadata {
 
         FileMetadata {
             file_name: String::new(),
-            file_size: 0,
+            file_size: FileSize::new(true),
             path: options.generate_upload_token(),
             upload_key: options.generate_key_token(),
             upload: FileState::NotStarted,
@@ -118,7 +122,7 @@ impl FileMetadata {
         Self {
             file_name: "null".to_string(), // private to downloader
             upload_key: "null".to_string(), // defeats the purpose of having this path
-            file_size: 0, // rather unknown during the download
+            file_size: self.file_size.clone(), // should this need to be authenticated? Should there be a metadata key?
             upload: self.upload.clone(),
             download: self.download.clone(),
             path: self.path.clone(),
@@ -165,5 +169,91 @@ impl FileMetadata {
             self.path = options.generate_upload_token();
             self.upload_key = options.generate_key_token();
             self.accessed = Utc::now();
+    }
+
+    #[cfg(feature = "server")]
+    pub fn set_compression(&mut self, compression: Compression) {
+        self.compression = compression;
+        if self.compression != Compression::None {
+            self.file_size.set_trustworthiness(false);
+        } else {
+            self.file_size.set_trustworthiness(true);
+        }
+    }
+
+    pub fn get_compression(&self) -> Compression {
+        self.compression.clone()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileSize {
+    file_size: Option<usize>, // raw file size as reported by beam up, pre-compression
+    uploaded_size: usize, // total number of bytes uploaded, will be post-compression. This value is constantly increasing. Since this does streaming, this value may never be complete if the file is over the cache size
+    downloaded_size: usize, // download progress, will need to be equal to uploaded size at completion
+    upload_complete: bool, // this is to know id uploaded_size is to be trusted
+    file_size_trustworthy: bool
+    // file_size is only sent as header when there is no compression, when upload_complete is true, uploaded_size will be defined as the header
+}
+
+#[cfg(feature = "server")]
+impl FileSize {
+    pub fn new(trusted: bool) -> Self {
+        Self { 
+            file_size: None,
+            uploaded_size: 0,
+            downloaded_size: 0,
+            upload_complete: false,
+            file_size_trustworthy: trusted
+        }
+    }
+    pub fn set_file_size(&mut self, size: usize) {
+        self.file_size = Some(size);
+    }
+
+    pub fn get_content_length(&self) -> Option<usize> {
+        if self.file_size_trustworthy { // this would happen when there's no compression
+            self.file_size
+        } else if self.upload_complete { // this happens when the upload is complete so the compressed size is accurate
+            Some(self.uploaded_size)
+        } else { // it is still streaming in and isn't known yet
+            None
+        }
+    }
+
+    pub fn increase_upload(&mut self, size: usize) {
+        self.uploaded_size += size;
+    }
+
+    pub fn get_uploaded_size(&self) -> usize {
+        self.uploaded_size
+    }
+
+    pub fn increase_download(&mut self, size: usize) {
+        self.downloaded_size += size;
+        if self.downloaded_size > self.uploaded_size {
+            warn!("Download progress is larger than upload size. This should not happen {} vs {}", self.downloaded_size, self.uploaded_size);
+        }
+    }
+
+    pub fn get_download_progress(&self) -> usize {
+        self.downloaded_size
+    }
+
+    fn set_trustworthiness(&mut self, trusted: bool) {
+        self.file_size_trustworthy = trusted;
+    }
+
+    pub fn download_complete(&self) -> bool {
+        self.upload_complete
+    }
+
+    pub fn get_file_string(&self) -> String {
+        if self.file_size_trustworthy {
+            if let Some(size) = self.file_size {
+                return format!("{} ({} bytes)", ByteSize(size as u64).to_string_as(true), (size));
+            }
+        }
+        return format!("Unknown");
     }
 }

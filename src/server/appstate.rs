@@ -210,14 +210,25 @@ impl AppState {
                     meta.file_name = name.unwrap();
                 }
                 if size.is_some() {
-                    meta.file_size = size.unwrap();
+                    meta.file_size.set_file_size(size.unwrap());
                 }
                 if compression.is_some() {
-                    meta.compression = compression.unwrap();
+                    meta.set_compression(compression.unwrap());
                 }
                 true
             },
             None => false
+        }
+    }
+
+    pub async fn increase_upload_download_numbers(&self, ticket: &String, upload: usize, download: usize) -> Option<(usize, usize)> {
+        match self.files.lock().await.get_mut(ticket) { // need mut just in case the upload is valid, so we can instantly lock it
+            Some(meta) => {
+                meta.file_size.increase_download(download);
+                meta.file_size.increase_upload(upload);
+                Some((meta.file_size.get_uploaded_size(), meta.file_size.get_download_progress()))
+            },
+            None => None
         }
     }
 
@@ -240,7 +251,14 @@ impl AppState {
         match meta.get_mut(ticket) {
             Some(meta) => {
                     meta.end_upload();
-                    true
+                    let mut up = self.uploads.lock().await;
+                    match up.remove(ticket) {
+                        Some(t) => {
+                            drop(t); // should now have zero senders
+                            true
+                        }
+                        None => false
+                    }
                 },
                 None => false
             }

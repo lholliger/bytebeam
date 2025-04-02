@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{atomic::{AtomicUsize, Ordering}, Arc}};
 use anyhow::Result;
 use async_stream::stream;
 use axum::{body::Body, extract::{DefaultBodyLimit, Multipart, Path, Query, State}, http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode}, response::{IntoResponse, Redirect}, routing::{delete, get, post}, Form, Json, Router};
-use bytesize::ByteSize;
 use chrono::{Duration, TimeDelta};
 use maud::{html, Markup};
 use bytes::{BytesMut, BufMut};
+use reqwest::header::{CONTENT_ENCODING, CONTENT_LENGTH};
 use tracing::{debug, error, info, trace, warn};
 use crate::{server::appstate::AppState, utils::{compression::Compression, metadata::FileMetadata}};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -23,7 +23,7 @@ pub async fn server(config: ServerConfig) -> Result<()> {
         None => {
             warn!("Public config is not defined... Using defaults!");
             // limit of 4kbps to long UUID tokens
-            ServerOptions::new(1, 4096, Duration::hours(1), "{uuid}".to_string(), "{uuid}".to_string(), Some(TimeDelta::seconds(1)))
+            ServerOptions::new(1, 4096, Duration::hours(1), "{uuid}".to_string(), "{uuid}".to_string(), Some(TimeDelta::seconds(1)), None)
         },
     };
 
@@ -31,7 +31,7 @@ pub async fn server(config: ServerConfig) -> Result<()> {
         Some(authenticated_options) => authenticated_options,
         None => {
             warn!("Authenticated config is not defined... Using defaults!");
-            ServerOptions::new((1024 * 1024 * 1024) / 4096, 4096, Duration::hours(1), "{number}-{word}-{word}-{word}".to_string(), "{number}-{word}-{word}-{word}".to_string(), None)
+            ServerOptions::new((1024 * 1024 * 1024) / 4096, 4096, Duration::hours(1), "{number}-{word}-{word}-{word}".to_string(), "{number}-{word}-{word}-{word}".to_string(), None, None)
         },
     };
 
@@ -117,21 +117,43 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
         }
     };
 
+    let bytes_counter = Arc::new(AtomicUsize::new(0));
+    let bytes_counter_clone = bytes_counter.clone();
+
+    // Spawn a separate tokio task to handle the updates
+    let update_handle = {
+        let state = state.clone();
+        let token = token.clone();
+        tokio::spawn(async move {
+            let mut updown = (0, 0);
+            
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                
+                let bytes = bytes_counter.swap(0, Ordering::Relaxed);
+                if bytes > 0 {
+                    updown = match state.increase_upload_download_numbers(&token, 0, bytes).await {
+                        Some((uploaded, downloaded)) => (uploaded, downloaded),
+                        None => {
+                            warn!("Failed to get upload/download numbers");
+                            updown
+                        }
+                    };
+                }
+            }
+        })
+    };
+
     let s = stream! {
-        let mut bytes_sent = 0;
         loop {
             let data = download.recv().await;
             match data {
                 Some(data) => {
-                    bytes_sent += data.len();
+                    bytes_counter_clone.fetch_add(data.len(), Ordering::Relaxed);
                     if data.is_empty() {
                         debug!("No bytes remaining to read");
                         state.end(&token).await;
                         break;
-                    }
-                    if meta.file_size > 0 && bytes_sent >= meta.file_size {
-                        debug!("File downloaded completely. Marking as done");
-                        state.end(&token).await;
                     }
                     yield Ok(data);
                 },
@@ -142,28 +164,29 @@ async fn download(State(state): State<AppState>, Path((token, path)): Path<(Stri
             }
         }
         // the download is complete
+        let final_bytes = bytes_counter_clone.load(Ordering::Relaxed);
+        state.increase_upload_download_numbers(&token, 0, final_bytes).await;
         state.end(&token).await;
+        update_handle.abort();
         info!("Download complete for {}", token);
     };
 
     let body = Body::from_stream(s);
 
-    
-    if meta.file_size != 0 {
-        debug!("Writing content length as {}", meta.file_size);
-        Ok(Response::builder()
-        .header("content-length", meta.file_size)
-        .body(body)
-        .unwrap())
-    } else if meta.compression != Compression::None { // size isnt given when compressing
-        debug!("Writing compression as {:?}", meta.compression);
-        Ok(Response::builder()
-        .header("content-encoding", meta.compression.to_string())
-        .body(body)
-        .unwrap())
-    } else {
-        Ok(body.into_response())
+    let response = Response::new(body);
+    let (mut parts, body) = response.into_parts();
+
+    if let Some(content_length) = meta.file_size.get_content_length() {
+        debug!("Writing content length as {}", content_length);
+        parts.headers.insert(CONTENT_LENGTH, content_length.into());
     }
+
+    if meta.get_compression() != Compression::None {
+        debug!("Writing compression as {:?}", meta.get_compression());
+        parts.headers.insert(CONTENT_ENCODING, HeaderValue::from_str(meta.get_compression().to_string().as_str()).unwrap());
+    };
+
+    Ok(Response::from_parts(parts, body))
 
     // on fail, return the downloader
 }
@@ -184,7 +207,43 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
         },
         None => false
     };
-    
+
+    let stream_metadata: bool = match params.get("stream") {
+        Some(m_str) => match m_str.parse() {
+            Ok(q) => q,
+            Err(_) => false
+        },
+        None => false
+    };
+
+    if stream_metadata {
+        let s =  stream! {
+            loop {
+                let meta = match state.get_file_metadata(&token).await {
+                    Some(meta) => meta,
+                    None => {
+                        debug!("Could not get streaming metadata! The file probably expired");
+                        yield Err("");
+                        break
+                    }
+                };
+
+                match serde_json::to_string(&meta.redact()) {
+                    Ok(s) => yield Ok(format!("{}\n", s)),
+                    Err(_) => {
+                        debug!("Could not format the redacted metadata to json!");
+                        yield Err("");
+                        break
+                    }
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            }
+        };
+        let body = Body::from_stream(s);
+        return Ok(body.into_response());
+    }
+
+
     if return_metadata {
         return Ok(Json(meta.redact()).into_response());
     }
@@ -214,7 +273,7 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
 
     if (agent.starts_with("Mozilla") || agent.starts_with("WhatsApp")) && !query_download {
         debug!("User agent is web ({}), sending landing", agent);
-        let file_size_string = format!("{} ({} bytes)", ByteSize(meta.file_size as u64).to_string_as(true), (meta.file_size));
+        let file_size_string = meta.file_size.get_file_string();
         return Err((StatusCode::from_u16(200).unwrap(),
         html! { // this could be prettier, although it's not meant to be too complex
         // some simple CSS down the line may be helpful
@@ -232,8 +291,8 @@ async fn get_download(State(state): State<AppState>, Path(token): Path<String>, 
                     p { "This download can only be started once. If it fails, you will need to ask the sender to re-upload"}
                     ul {
                         li {"File name: " (&meta.file_name)}
-                        li {"File size: " (&file_size_string)}
-                        li {"Compression: " (&meta.compression.to_string())}
+                        li {"Uncompressed file size: " (&file_size_string)}
+                        li {"Compression: " (&meta.get_compression().to_string())}
                     }
                     a href = "?download=true" download {"Click here to start the download"}
                     br;
@@ -345,13 +404,38 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
         }
 
         // now get upload things
-        let mut size = 0;
         info!("Upload to path {} had receiver... sending", name);
 
         let mut buffer = BytesMut::new();
+        let bytes_counter = Arc::new(AtomicUsize::new(0));
+        let bytes_counter_clone = bytes_counter.clone();
+
+        // Spawn a separate tokio task to handle the updates
+            let update_handle = {
+            let state = state.clone();
+            let token = token.clone();
+            tokio::spawn(async move {
+                let mut updown = (0, 0);
+                
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    
+                    let bytes = bytes_counter.swap(0, Ordering::Relaxed);
+                    if bytes > 0 {
+                        updown = match state.increase_upload_download_numbers(&token, bytes, 0).await {
+                            Some((uploaded, downloaded)) => (uploaded, downloaded),
+                            None => {
+                                warn!("Failed to get upload/download numbers");
+                                updown
+                            }
+                        };
+                    }
+                }
+            })
+        };
 
         while let Some(chunk) = field.chunk().await.unwrap() {
-            size += chunk.len();
+            bytes_counter_clone.fetch_add(chunk.len(), Ordering::Relaxed);
             buffer.put(chunk);
 
             while buffer.len() >= block_size {
@@ -363,6 +447,8 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
                         return "Failed to send a chunk... upload may have failed".into_response();
                     }
                 }
+
+
                 if upload.is_closed() {
                     error!("Upload failed");
                     return "Upload failed".into_response();
@@ -388,13 +474,19 @@ async fn upload(State(state): State<AppState>, Path((token, key)): Path<(String,
                 error!("Failed to send close signal: {:?}", e);
             }
         }
-        info!("Sent file with size {} to token {}", size, &token);
+
+        let final_bytes = bytes_counter_clone.load(Ordering::Relaxed);
+        state.increase_upload_download_numbers(&token, 0, final_bytes).await;
+        state.end(&token).await;
+        update_handle.abort();
+
+        info!("Sent file with size {} to token {}", final_bytes, &token);
         // now we can mark upload as complete
         if state.end_upload(&token).await {
-            return format!("Done! Sent {} bytes", size).into_response();
+            return format!("Done! Sent {} bytes", final_bytes).into_response();
         } else { // this shouldn't really happen?
             error!("Had an issue marking the download as ended");
-            return format!("Done! Sent {} bytes, however the upload failed to be marked as complete", size).into_response();
+            return format!("Done! Sent {} bytes, however the upload failed to be marked as complete", final_bytes).into_response();
         }
     }
     return format!("An error occured (form has incomplete fields)").into_response();

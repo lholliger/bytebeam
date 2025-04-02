@@ -4,7 +4,7 @@ An extremely simple way to stream a file from one machine to another using a sel
 
 **This is in no way ready for deployment!**
 
-Note: This readme is not updated for 0.3.0 yet.
+Note: This readme is as of 0.2.0 and is not updated! Some parts should work but this does not include the new authentication features
 
 ## Background
 
@@ -115,11 +115,13 @@ When doing `beam down -o filename`, the page given is web-accessible allow for a
 
 ## TODOs:
 *The content nested is somewhat the thoughts I'm having for solution*
+*These were loosely added in order so checkoffs won't be organized, child sections may change often and not move up/down*
 
 - [x] Upload should be its own little rust program on my side so a link can be auto generated for the content
 - [x] Server side caching if requested
 - [ ] Streaming a folder through tar.gz/zip
 - [x] Streaming input
+- [ ] Streaming output
 - [x] Client start/better progress
     - Updates done during the keepalive, better progress could be given however
 - [ ] Restart on fail as an option
@@ -133,8 +135,20 @@ When doing `beam down -o filename`, the page given is web-accessible allow for a
 - [ ] Add some query args on upload to add some requirements/options
 - [x] Allow for reverse uploading/creation of single-use upload keys
     - still needs client implementation
-- [ ] Better front end
-    - Management of what's currently active, memory usage, etc
+- [ ] Better web interface
+    - [ ] Web interface for statistics (memory usage, active sessions, etc)
+    - [ ] CSS for upload/download pages
+    - [ ] Front page
+    - [ ] GitHub link
+    - [ ] Upload page progress (Can it be done JSless?)
+- [ ] CLI improvements
+    - [ ] Server management remotely
+    - [ ] Replace polling with streamed status
+    - [ ] Get multiple progress bars for compress/upload/download
+    - [ ] a "beam config" to go around manual toml writing
+    - [ ] Anonymity options
+        - [ ] Hide user identity from statuses but still allow signing
+        - [ ] Temporarily disable keysigning
 - [x] A concept of multi-user instead of single auth key
     - using SSH key signing
     - allow optional unauthenticated user usage with rate limits
@@ -144,13 +158,7 @@ When doing `beam down -o filename`, the page given is web-accessible allow for a
 - [x] Expiry of uploads that are entirely within cache after a given time
 - [x] Better logging for client and server, a little less "de-buggy"
     - server is fairly verbose, client default is good.
-- [ ] Possibly go fully into wormhole territory and encrypt client side
-    - Possibly do it with a pre-shared secret since things tend to be one-direction
-        - is there an easy way to do key exchange without both people needing the client?
-    - Allow for decryption using built-in tools when downloading using openssl and curl
 - [x] Hold client state in some config instead of needing envionment variables for all usage
-    - also perhaps add a "beam config"
-    - needs cleanup
 - [x] Move server as a feature to remove unneeded features for those only using the client
 - [ ] Possibly do away with the "secret" so that one value is for upload and another is for download
     - could be confusing if there is more than one "token" per upload/download pair
@@ -159,3 +167,36 @@ When doing `beam down -o filename`, the page given is web-accessible allow for a
 - [x] Give feedback after upload
     - Give status codes and more details rather than just a string
 - [x] Keepalive when doing reverse upload
+- [ ] File storage feature
+    - allows to host a file for a period of time to allow multiple downloads
+    - also allows for cache size to be much greater
+    - not default as it isnt needed for most use cases and is out of scope to a point
+    - option to emphemerally encrypt or keep longer term to limit server liability
+- [ ] Max cache size
+    - Each request gets 1/2-1/5 of the total remaining cache size perhaps?
+    - Resize when one request is completed?
+- [ ] Better user management
+    - [ ] Multiple authentication groups instead of default/auth
+    - [ ] Allow multiple keyservers
+- [ ] Handle versioning better (major/minor/patch etc)
+- [ ] Integration testing
+- [ ] Cache keyserver keys and update lazily instead of on restart
+    - [ ] Option to define cache timeout for each keyserver
+- [ ] Move away from depending on a reverse-proxy for security
+    - [ ] Possible internal SSL support
+    - [ ] Different form of encryption internally
+    - [ ] Post-quantum resistance
+    - [ ] Censorship resistance
+    - [ ] Server signing
+    - [ ] Client-side encryption
+        - Possibly do it with a pre-shared secret since things tend to be one-direction?
+        - is there an easy way to do key exchange without both people needing the client?
+        - Allow for decryption using built-in tools when downloading using openssl and curl
+- [ ] Client approval of downloads
+    - [ ] Require downloader/reverse uploader to sign or send info
+- [ ] Abuse prevention
+    - [ ] IP rate limiting
+    - [ ] Region blocking option
+    - [ ] Scanning detection
+    - [ ] MITM detection
+- [ ] Docs/Wiki instead of all readme

@@ -188,13 +188,16 @@ pub async fn upload(config: UploadArgs) -> Result<(), ()> {
                         response.text().await.unwrap()
                     );
                 }
+                bar.finish();
+                let fin_bytes = read_so_far.clone().lock().unwrap().clone();
+                println!("File uploaded successfully. ({} bytes)", &fin_bytes);
             },
             Err(e) => {
                 error!("Failed to connect to Beam server: {}", e);
             }
         }
 
-    let fin_bytes = read_so_far.clone().lock().unwrap().clone();
+    /*let fin_bytes = read_so_far.clone().lock().unwrap().clone();
     if fin_bytes == file_len {
         println!("File uploaded successfully. ({} bytes)", &fin_bytes);
     } else if fin_bytes > file_len {
@@ -206,7 +209,7 @@ pub async fn upload(config: UploadArgs) -> Result<(), ()> {
             ByteSize(file_len).to_string_as(true),
             ((fin_bytes as f64 / file_len as f64) * 100.0).round() as u8
         );
-    }
+    }*/
 
     match thread {
         Some(thread) => {
